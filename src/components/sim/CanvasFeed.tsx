@@ -268,18 +268,22 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
         ctx.fill();
 
         const size = Math.max(2.5, z * 0.9);
-        ctx.fillStyle = r.waiting ? "rgba(255,170,60,0.95)" : "rgba(150,255,205,0.95)";
+        const bodyColor = r.waiting ? "rgba(255,170,60,0.95)" : "rgba(150,255,205,0.95)";
+
+        // Round body
+        ctx.fillStyle = bodyColor;
         ctx.beginPath();
-        ctx.moveTo(sx + Math.cos(r.heading) * size * 1.8, sy + Math.sin(r.heading) * size * 1.8);
-        ctx.lineTo(
-          sx + Math.cos(r.heading + 2.4) * size,
-          sy + Math.sin(r.heading + 2.4) * size,
-        );
-        ctx.lineTo(
-          sx + Math.cos(r.heading - 2.4) * size,
-          sy + Math.sin(r.heading - 2.4) * size,
-        );
-        ctx.closePath();
+        ctx.arc(sx, sy, size, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Eye: small filled dot on the front edge, pointing in heading direction
+        const eyeDist = size * 0.72;
+        const ex = sx + Math.cos(r.heading) * eyeDist;
+        const ey = sy + Math.sin(r.heading) * eyeDist;
+        const eyeR = Math.max(1, size * 0.28);
+        ctx.fillStyle = r.waiting ? "rgba(20,10,0,0.9)" : "rgba(0,18,12,0.9)";
+        ctx.beginPath();
+        ctx.arc(ex, ey, eyeR, 0, Math.PI * 2);
         ctx.fill();
       }
     };
