@@ -92,18 +92,27 @@ export function generateMap(seed: number): SimMap {
     if (vertical) {
       const cut = Math.round(rng.range(r.x + MIN, r.x + r.w - MIN));
       fillRect(tiles, cut, r.y, 1, r.h, TILE_WALL);
-      // 4-tile doorway (wider for easier passage)
-      const dy = Math.round(rng.range(r.y + 4, r.y + r.h - 8));
-      fillRect(tiles, cut, dy, 1, 4, TILE_FLOOR);
-      doorways.push({ x: cut, y: dy, w: 1, h: 4 });
+      // two 8-tile doorways, one per half of the wall
+      const mid = r.y + Math.floor(r.h / 2);
+      const dy1 = Math.round(rng.range(r.y + 4, mid - 9));
+      fillRect(tiles, cut, dy1, 1, 8, TILE_FLOOR);
+      doorways.push({ x: cut, y: dy1, w: 1, h: 8 });
+      const dy2 = Math.round(rng.range(mid + 2, r.y + r.h - 12));
+      fillRect(tiles, cut, dy2, 1, 8, TILE_FLOOR);
+      doorways.push({ x: cut, y: dy2, w: 1, h: 8 });
       split({ x: r.x, y: r.y, w: cut - r.x, h: r.h }, depth + 1);
       split({ x: cut + 1, y: r.y, w: r.x + r.w - cut - 1, h: r.h }, depth + 1);
     } else {
       const cut = Math.round(rng.range(r.y + MIN, r.y + r.h - MIN));
       fillRect(tiles, r.x, cut, r.w, 1, TILE_WALL);
-      const dx = Math.round(rng.range(r.x + 4, r.x + r.w - 8));
-      fillRect(tiles, dx, cut, 4, 1, TILE_FLOOR);
-      doorways.push({ x: dx, y: cut, w: 4, h: 1 });
+      // two 8-tile doorways, one per half of the wall
+      const mid = r.x + Math.floor(r.w / 2);
+      const dx1 = Math.round(rng.range(r.x + 4, mid - 9));
+      fillRect(tiles, dx1, cut, 8, 1, TILE_FLOOR);
+      doorways.push({ x: dx1, y: cut, w: 8, h: 1 });
+      const dx2 = Math.round(rng.range(mid + 2, r.x + r.w - 12));
+      fillRect(tiles, dx2, cut, 8, 1, TILE_FLOOR);
+      doorways.push({ x: dx2, y: cut, w: 8, h: 1 });
       split({ x: r.x, y: r.y, w: r.w, h: cut - r.y }, depth + 1);
       split({ x: r.x, y: cut + 1, w: r.w, h: r.y + r.h - cut - 1 }, depth + 1);
     }
