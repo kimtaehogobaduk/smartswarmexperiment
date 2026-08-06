@@ -47,15 +47,15 @@ export interface Robot {
   waiting: boolean;
   stuckFor: number;
   avoid: Map<number, number>;
-  /** position the bot was at the last time it made meaningful progress */
-  prevX: number;
-  prevY: number;
-  /** older position snapshot, updated every ~3 tiles of travel — used for the escalated rescue */
-  prevX2: number;
-  prevY2: number;
+  /**
+   * Ring of past positions sampled every ~2 tiles of travel, newest first.
+   * index 0 = last good tile, index 1 = ~2 tiles before that, etc.
+   * Capped at 20 entries so memory stays bounded.
+   */
+  posHistory: { x: number; y: number }[];
   /** sim-time of the last meaningful move (used for the 3-s teleport rescue) */
   lastMoveTime: number;
-  /** how many consecutive rescues have fired without the bot recovering (0 = none yet) */
+  /** how many consecutive rescues have fired; used as the posHistory index */
   rescueCount: number;
 }
 
@@ -145,10 +145,7 @@ export class Simulation {
         waiting: false,
         stuckFor: 0,
         avoid: new Map(),
-        prevX: x,
-        prevY: y,
-        prevX2: x,
-        prevY2: y,
+        posHistory: [{ x, y }],
         lastMoveTime: 0,
         rescueCount: 0,
       });
@@ -495,15 +492,14 @@ export class Simulation {
       let moved = 0;
       if (!blocked(this.map, Math.floor(nx), Math.floor(ny))) {
         moved = Math.hypot(nx - r.x, ny - r.y);
-        // Record previous positions only while actually moving
+        // Record position history only while actually moving
         if (moved > 0.05) {
-          // prevX2 advances only once the bot has moved ≥3 tiles from its last deep snapshot
-          if (Math.hypot(r.x - r.prevX2, r.y - r.prevY2) >= 3) {
-            r.prevX2 = r.prevX;
-            r.prevY2 = r.prevY;
+          const last = r.posHistory[0]!;
+          // Push a new snapshot every ~2 tiles of travel from the previous one
+          if (Math.hypot(r.x - last.x, r.y - last.y) >= 2) {
+            r.posHistory.unshift({ x: r.x, y: r.y });
+            if (r.posHistory.length > 20) r.posHistory.length = 20;
           }
-          r.prevX = r.x;
-          r.prevY = r.y;
           r.lastMoveTime = this.time;
           r.rescueCount = 0; // moving freely — reset escalation counter
         }
@@ -523,28 +519,20 @@ export class Simulation {
         r.stuckFor = Math.max(0, r.stuckFor - dt);
       }
 
-      // 3-second rescue: escalating teleport-back when a bot stays stuck
+      // 3-second rescue: escalating teleport-back — walks posHistory deeper on every attempt
       if (this.time - r.lastMoveTime > 3 && this.time > 3) {
-        if (r.rescueCount === 0) {
-          // First rescue: snap to the last tile with meaningful movement
-          if (!blocked(this.map, Math.floor(r.prevX), Math.floor(r.prevY))) {
-            r.x = r.prevX;
-            r.y = r.prevY;
-          }
-        } else {
-          // Still stuck after first rescue: fall back to the deeper snapshot (≥3 tiles further)
-          if (!blocked(this.map, Math.floor(r.prevX2), Math.floor(r.prevY2))) {
-            r.x = r.prevX2;
-            r.y = r.prevY2;
-          }
-          r.rescueCount = 0; // reset so the cycle can repeat if needed
+        const idx = Math.min(r.rescueCount, r.posHistory.length - 1);
+        const snap = r.posHistory[idx]!;
+        if (!blocked(this.map, Math.floor(snap.x), Math.floor(snap.y))) {
+          r.x = snap.x;
+          r.y = snap.y;
         }
-        r.rescueCount++;
+        r.rescueCount++;          // next rescue goes one step deeper in history
         r.path = [];
         r.goalCell = -1;
         r.stuckFor = 0;
         r.lastMoveTime = this.time;
-        r.replanIn = 0; // force an immediate replan next tick
+        r.replanIn = 0;
       }
     }
   }
