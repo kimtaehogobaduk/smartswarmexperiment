@@ -57,6 +57,11 @@ export interface Robot {
   lastMoveTime: number;
   /** how many consecutive rescues have fired; used as the posHistory index */
   rescueCount: number;
+  /** position where the last rescue teleport landed */
+  rescueX: number;
+  rescueY: number;
+  /** how many consecutive rescues have landed within ~3 tiles of each other */
+  sameSpotRescues: number;
 }
 
 export interface Target {
@@ -148,6 +153,9 @@ export class Simulation {
         posHistory: [{ x, y }],
         lastMoveTime: 0,
         rescueCount: 0,
+        rescueX: x,
+        rescueY: y,
+        sameSpotRescues: 0,
       });
     }
   }
@@ -520,13 +528,20 @@ export class Simulation {
       }
 
       // 3-second rescue: escalating teleport-back — walks posHistory deeper on every attempt.
-      // After 15 s total (rescueCount >= 5), give up and return to spawn.
+      // Sends to spawn after 15 s (rescueCount >= 5) OR if rescued 5+ times near the same spot.
       if (this.time - r.lastMoveTime > 3 && this.time > 3) {
-        if (r.rescueCount >= 5) {
-          // 15 s stuck with no recovery → back to spawn
+        // Check whether this rescue is firing near the same location as the last one
+        const nearSameSpot = Math.hypot(r.x - r.rescueX, r.y - r.rescueY) < 3;
+        if (nearSameSpot) r.sameSpotRescues++; else r.sameSpotRescues = 1;
+        r.rescueX = r.x;
+        r.rescueY = r.y;
+
+        const sendToSpawn = r.rescueCount >= 5 || r.sameSpotRescues > 5;
+        if (sendToSpawn) {
           r.x = this.map.spawn.x + 0.5;
           r.y = this.map.spawn.y + 0.5;
           r.rescueCount = 0;
+          r.sameSpotRescues = 0;
           r.posHistory = [{ x: r.x, y: r.y }];
         } else {
           const idx = Math.min(r.rescueCount, r.posHistory.length - 1);
