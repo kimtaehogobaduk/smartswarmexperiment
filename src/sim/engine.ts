@@ -7,6 +7,7 @@ import {
   hasLineOfSight,
   type SimMap,
 } from "./map";
+import { PathFinder } from "./astar";
 import { Rng } from "./rng";
 
 export type SimMode = "swarm" | "central";
@@ -34,14 +35,18 @@ export interface Robot {
   heading: number;
   speedNoise: number;
   sensorBias: number;
-  path: number[]; // coarse cell indices
-  goal: number; // coarse cell index, -1 none
+  /** coarse knowledge: 0 unknown, 1 free, 2 blocked */
+  known: Uint8Array;
+  /** fine tile beliefs: 0 unknown, 1 free, 2 blocked */
+  fine: Uint8Array;
+  path: number[];
+  goalCell: number;
   replanIn: number;
-  known: Uint8Array; // coarse knowledge (swarm only; shared array in central)
   knownTargets: Set<number>;
   distance: number;
   waiting: boolean;
   stuckFor: number;
+  avoid: Map<number, number>;
 }
 
 export interface Target {
@@ -51,7 +56,7 @@ export interface Target {
   foundAt: number | null;
 }
 
-export const MAX_SPEED = 2.0; // tiles / second
+export const MAX_SPEED = 2.0; // tiles per second
 const SENSOR_RANGE = 26;
 const FOV = (100 * Math.PI) / 180;
 const RADIO_RANGE = 40;
@@ -66,18 +71,20 @@ export class Simulation {
   readonly map: SimMap;
   robots: Robot[] = [];
   targets: Target[] = [];
-  /** team-visible explored grid (used for fog rendering + central planner) */
+  /** team-visible explored coarse grid (fog rendering + central planner) */
   explored: Uint8Array;
-  /** coarse passability derived from the true map (central planner) */
+  /** coarse passability derived from the true map (central planner only) */
   passable: Uint8Array;
   time = 0;
   congestionTime = 0;
   totalDistance = 0;
   private rng: Rng;
+  private pf = new PathFinder();
   private senseAcc = 0;
   private radioAcc = 0;
-  private claims = new Map<number, number>(); // coarse cell -> robot id
-  private doorLock: { dir: number; ttl: number; owner: number }[] = [];
+  private claims = new Map<number, number>();
+  private doorLock: { dir: number; ttl: number }[] = [];
+  private truthFine: Uint8Array;
 
   constructor(config: SimConfig) {
     this.config = config;
@@ -85,6 +92,10 @@ export class Simulation {
     this.rng = new Rng(config.runSeed);
     this.explored = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
     this.passable = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
+    this.truthFine = new Uint8Array(MAP_SIZE * MAP_SIZE);
+    for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) {
+      this.truthFine[i] = this.map.tiles[i] === 0 ? FREE : BLOCKED;
+    }
     for (let cy = 0; cy < COARSE_SIZE; cy++) {
       for (let cx = 0; cx < COARSE_SIZE; cx++) {
         let free = 0;
@@ -94,16 +105,17 @@ export class Simulation {
         this.passable[cIdx(cx, cy)] = free >= 4 ? 1 : 0;
       }
     }
-    this.doorLock = this.map.doorways.map(() => ({ dir: 0, ttl: 0, owner: -1 }));
+    this.doorLock = this.map.doorways.map(() => ({ dir: 0, ttl: 0 }));
     this.spawnRobots();
     this.spawnTargets();
   }
 
   private spawnRobots() {
     const { spawn } = this.map;
-    const shared = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
+    const central = this.config.mode === "central";
+    const sharedCoarse = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
     for (let i = 0; i < this.config.robots; i++) {
-      // all robots stacked inside a single 2x2 tile pad -> immediate bottleneck
+      // every robot spawns inside one 2x2 tile pad -> immediate bottleneck queue
       const x = spawn.x + this.rng.range(0, 2);
       const y = spawn.y + this.rng.range(0, 2);
       this.robots.push({
@@ -111,18 +123,18 @@ export class Simulation {
         y,
         heading: this.rng.range(0, Math.PI * 2),
         speedNoise: 1 + this.rng.gauss() * 0.03, // ±3% speed jitter
-        sensorBias: this.rng.gauss() * 0.04,
+        sensorBias: Math.abs(this.rng.gauss()) * 0.04,
+        known: central ? sharedCoarse : new Uint8Array(COARSE_SIZE * COARSE_SIZE),
+        // the central tower holds the full map; swarm robots build beliefs locally
+        fine: central ? this.truthFine : new Uint8Array(MAP_SIZE * MAP_SIZE),
         path: [],
-        goal: -1,
-        replanIn: this.rng.range(0, 0.6),
-        known:
-          this.config.mode === "central"
-            ? shared
-            : new Uint8Array(COARSE_SIZE * COARSE_SIZE),
+        goalCell: -1,
+        replanIn: this.rng.range(0, 0.5),
         knownTargets: new Set<number>(),
         distance: 0,
         waiting: false,
         stuckFor: 0,
+        avoid: new Map(),
       });
     }
   }
@@ -131,8 +143,7 @@ export class Simulation {
     const reach = this.map.reachable;
     const spawn = this.map.spawn;
     for (let i = 0; i < this.config.targets; i++) {
-      let tries = 0;
-      while (tries++ < 500) {
+      for (let tries = 0; tries < 800; tries++) {
         const flat = reach[this.rng.int(0, reach.length - 1)] as number;
         const x = flat % MAP_SIZE;
         const y = (flat - x) / MAP_SIZE;
@@ -150,43 +161,43 @@ export class Simulation {
       totalDistance: this.totalDistance,
       congestionTime: this.congestionTime,
       found: this.targets.filter((t) => t.found).length,
-      done: this.targets.every((t) => t.found),
+      done: this.targets.length > 0 && this.targets.every((t) => t.found),
     };
   }
 
   // ---------------------------------------------------------------- sensing
   private sense(r: Robot) {
-    const rays = 26;
+    const rays = 30;
     const half = FOV / 2;
+    const swarm = this.config.mode === "swarm";
     for (let k = 0; k < rays; k++) {
       const a =
-        r.heading -
-        half +
-        (FOV * k) / (rays - 1) +
-        r.sensorBias * this.rng.gauss(); // sensor angle variance
+        r.heading - half + (FOV * k) / (rays - 1) + r.sensorBias * this.rng.gauss();
       const dx = Math.cos(a);
       const dy = Math.sin(a);
       for (let d = 1; d <= SENSOR_RANGE; d++) {
         const x = Math.floor(r.x + dx * d);
         const y = Math.floor(r.y + dy * d);
         if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE) break;
+        const flat = y * MAP_SIZE + x;
         const c = cIdx(Math.floor(x / COARSE), Math.floor(y / COARSE));
         if (blocked(this.map, x, y)) {
+          if (swarm) r.fine[flat] = BLOCKED;
           if (r.known[c] === UNKNOWN) r.known[c] = BLOCKED;
           if (this.explored[c] === UNKNOWN) this.explored[c] = BLOCKED;
           break;
         }
+        if (swarm) r.fine[flat] = FREE;
         r.known[c] = FREE;
         this.explored[c] = FREE;
       }
     }
-    // target detection inside the FOV cone
     for (let i = 0; i < this.targets.length; i++) {
       const t = this.targets[i] as Target;
       const dist = Math.hypot(t.x - r.x, t.y - r.y);
       if (dist > SENSOR_RANGE) continue;
       const ang = Math.atan2(t.y - r.y, t.x - r.x);
-      let diff = Math.abs(((ang - r.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      const diff = Math.abs(((ang - r.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
       if (diff > half) continue;
       if (!hasLineOfSight(this.map, r.x, r.y, t.x, t.y)) continue;
       r.knownTargets.add(i);
@@ -197,7 +208,7 @@ export class Simulation {
     }
   }
 
-  /** swarm peer-to-peer knowledge sharing inside physical radio range */
+  /** swarm peers exchange knowledge only inside physical radio range */
   private radioSync() {
     if (this.config.mode !== "swarm") return;
     const n = this.robots.length;
@@ -223,107 +234,120 @@ export class Simulation {
     return cIdx(Math.floor(r.x / COARSE), Math.floor(r.y / COARSE));
   }
 
-  /** BFS from robot cell to the best unclaimed frontier; returns path of cells */
-  private planFrontier(r: Robot, id: number): number[] {
+  private isFrontier(r: Robot, cell: number): boolean {
     const central = this.config.mode === "central";
-    const known = central ? this.explored : r.known;
-    const start = this.cellOf(r);
-    const prev = new Int32Array(COARSE_SIZE * COARSE_SIZE).fill(-1);
-    const seen = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
-    const queue: number[] = [start];
-    seen[start] = 1;
-    let head = 0;
-    let best = -1;
-    // priority: an assigned known target, otherwise the nearest frontier
-    const targetCells = new Set<number>();
-    for (const ti of r.knownTargets) {
-      const t = this.targets[ti] as Target;
-      targetCells.add(cIdx(Math.floor(t.x / COARSE), Math.floor(t.y / COARSE)));
-    }
-    while (head < queue.length) {
-      const cur = queue[head++] as number;
-      const cx = cur % COARSE_SIZE;
-      const cy = (cur - cx) / COARSE_SIZE;
-      const frontier = this.isFrontier(known, cx, cy, central);
-      if (frontier && !this.claims.has(cur)) {
-        best = cur;
-        break;
-      }
-      for (let d = 0; d < 4; d++) {
-        const nx = cx + (d === 0 ? 1 : d === 1 ? -1 : 0);
-        const ny = cy + (d === 2 ? 1 : d === 3 ? -1 : 0);
-        if (nx < 0 || ny < 0 || nx >= COARSE_SIZE || ny >= COARSE_SIZE) continue;
-        const ni = cIdx(nx, ny);
-        if (seen[ni]) continue;
-        const walkable = central
-          ? this.passable[ni] === 1
-          : known[ni] === FREE || known[ni] === UNKNOWN;
-        if (!walkable) continue;
-        seen[ni] = 1;
-        prev[ni] = cur;
-        queue.push(ni);
-      }
-    }
-    if (best < 0) {
-      // fall back to any reachable explored cell, keeps robots moving
-      const pool = queue.filter((c) => c !== start);
-      if (!pool.length) return [];
-      best = pool[this.rng.int(0, pool.length - 1)] as number;
-    }
-    const path: number[] = [];
-    let cur = best;
-    while (cur !== start && cur >= 0) {
-      path.push(cur);
-      cur = prev[cur] as number;
-    }
-    path.reverse();
-    this.claims.set(best, id);
-    r.goal = best;
-    return path;
-  }
-
-  private isFrontier(
-    known: Uint8Array,
-    cx: number,
-    cy: number,
-    central: boolean,
-  ): boolean {
-    const self = cIdx(cx, cy);
-    if (central) {
-      if (this.passable[self] !== 1) return false;
-      if (known[self] !== UNKNOWN) return false;
-      return true;
-    }
-    if (known[self] !== FREE) return false;
+    const cx = cell % COARSE_SIZE;
+    const cy = (cell - cx) / COARSE_SIZE;
+    if (central) return this.passable[cell] === 1 && this.explored[cell] === UNKNOWN;
+    if (r.known[cell] !== FREE) return false;
     for (let d = 0; d < 4; d++) {
       const nx = cx + (d === 0 ? 1 : d === 1 ? -1 : 0);
       const ny = cy + (d === 2 ? 1 : d === 3 ? -1 : 0);
       if (nx < 0 || ny < 0 || nx >= COARSE_SIZE || ny >= COARSE_SIZE) continue;
-      if (known[cIdx(nx, ny)] === UNKNOWN) return true;
+      if (r.known[cIdx(nx, ny)] === UNKNOWN) return true;
     }
     return false;
   }
 
-  /** clearance along a direction, in tiles (max 4) */
+  /** pick an unclaimed goal: a known target first, otherwise nearest frontier */
+  private chooseGoal(r: Robot, id: number): { x: number; y: number; cell: number } | null {
+    for (const ti of r.knownTargets) {
+      const t = this.targets[ti] as Target;
+      if (!t) continue;
+    }
+    const from = this.cellOf(r);
+    const fx = from % COARSE_SIZE;
+    const fy = (from - fx) / COARSE_SIZE;
+    let best = -1;
+    let bestScore = Infinity;
+    for (let cell = 0; cell < COARSE_SIZE * COARSE_SIZE; cell++) {
+      if (!this.isFrontier(r, cell)) continue;
+      const cx = cell % COARSE_SIZE;
+      const cy = (cell - cx) / COARSE_SIZE;
+      const claimed = this.claims.has(cell) && this.claims.get(cell) !== id;
+      const avoided = (r.avoid.get(cell) ?? 0) > this.time;
+      if (avoided) continue;
+      const d = Math.hypot(cx - fx, cy - fy);
+      const score = d + (claimed ? 26 : 0) + this.rng.range(0, 3);
+      if (score < bestScore) {
+        bestScore = score;
+        best = cell;
+      }
+    }
+    if (best < 0) return null;
+    const cx = best % COARSE_SIZE;
+    const cy = (best - cx) / COARSE_SIZE;
+    // pick a walkable tile inside the goal cell
+    let gx = cx * COARSE + 2;
+    let gy = cy * COARSE + 2;
+    let found = false;
+    for (let j = 0; j < COARSE && !found; j++) {
+      for (let i = 0; i < COARSE && !found; i++) {
+        const x = cx * COARSE + i;
+        const y = cy * COARSE + j;
+        if (r.fine[y * MAP_SIZE + x] !== BLOCKED) {
+          gx = x;
+          gy = y;
+          found = true;
+        }
+      }
+    }
+    return { x: gx, y: gy, cell: best };
+  }
+
+  private replan(r: Robot, id: number) {
+    if (r.goalCell >= 0 && this.claims.get(r.goalCell) === id) this.claims.delete(r.goalCell);
+    // a detected-but-unvisited target takes priority over frontier sweeping
+    let goal = this.chooseGoal(r, id);
+    if (!goal) {
+      // nothing left to explore: patrol toward a random known-free cell
+      const pool: number[] = [];
+      for (let c = 0; c < r.known.length; c++)
+        if ((this.config.mode === "central" ? this.passable[c] : r.known[c]) === 1) pool.push(c);
+      if (!pool.length) {
+        r.path = [];
+        return;
+      }
+      const cell = pool[this.rng.int(0, pool.length - 1)] as number;
+      const cx = cell % COARSE_SIZE;
+      const cy = (cell - cx) / COARSE_SIZE;
+      goal = { x: cx * COARSE + 2, y: cy * COARSE + 2, cell };
+    }
+    r.goalCell = goal.cell;
+    this.claims.set(goal.cell, id);
+    const fine = r.fine;
+    r.path = this.pf.find(
+      Math.floor(r.x),
+      Math.floor(r.y),
+      goal.x,
+      goal.y,
+      (x, y) => fine[y * MAP_SIZE + x] === BLOCKED,
+      this.config.mode === "central" ? 60000 : 35000,
+    );
+    if (!r.path.length) r.avoid.set(goal.cell, this.time + 25);
+  }
+
   private clearance(x: number, y: number, dx: number, dy: number): number {
     for (let d = 1; d <= 4; d++) {
-      if (blocked(this.map, Math.floor(x + dx * d), Math.floor(y + dy * d))) return d - 1;
+      if (blocked(this.map, Math.floor(x + dx * d * 0.8), Math.floor(y + dy * d * 0.8)))
+        return d - 1;
     }
     return 4;
   }
 
-  /** doorway queue manager for centralized mode */
-  private doorwayPermit(r: Robot, dirAngle: number): boolean {
+  /** centralized doorway queue manager: one direction of travel at a time */
+  private doorwayPermit(r: Robot, angle: number): boolean {
     const di = this.map.doorwayAt[Math.floor(r.y) * MAP_SIZE + Math.floor(r.x)] as number;
     if (!di) return true;
     const lock = this.doorLock[di - 1];
     if (!lock) return true;
-    const dir = Math.abs(Math.cos(dirAngle)) > Math.abs(Math.sin(dirAngle))
-      ? Math.sign(Math.cos(dirAngle))
-      : Math.sign(Math.sin(dirAngle)) * 2;
+    const dir =
+      Math.abs(Math.cos(angle)) > Math.abs(Math.sin(angle))
+        ? Math.sign(Math.cos(angle))
+        : Math.sign(Math.sin(angle)) * 2;
     if (lock.ttl <= 0 || lock.dir === dir) {
       lock.dir = dir;
-      lock.ttl = 1.2;
+      lock.ttl = 0.9;
       return true;
     }
     return false;
@@ -348,81 +372,88 @@ export class Simulation {
       const r = this.robots[id] as Robot;
       if (doSense) this.sense(r);
 
+      // consume reached waypoints
+      while (r.path.length) {
+        const wp = r.path[0] as number;
+        const wx = (wp % MAP_SIZE) + 0.5;
+        const wy = Math.floor(wp / MAP_SIZE) + 0.5;
+        if (Math.hypot(wx - r.x, wy - r.y) < 1.3) r.path.shift();
+        else break;
+      }
+
       r.replanIn -= dt;
-      const cell = this.cellOf(r);
-      if (r.path.length && r.path[0] === cell) r.path.shift();
-      if (r.replanIn <= 0 || !r.path.length || r.stuckFor > 1.5) {
-        if (r.goal >= 0 && this.claims.get(r.goal) === id) this.claims.delete(r.goal);
-        r.path = this.planFrontier(r, id);
-        r.replanIn = 1.5 + this.rng.range(0, 1);
+      if (r.replanIn <= 0 || !r.path.length || r.stuckFor > 1.2) {
+        if (r.stuckFor > 1.2 && r.goalCell >= 0) r.avoid.set(r.goalCell, this.time + 20);
+        this.replan(r, id);
+        r.replanIn = 3 + this.rng.range(0, 2);
         r.stuckFor = 0;
       }
 
-      // desired heading toward next waypoint (or a known unvisited target)
-      let desired = r.heading;
-      const next = r.path[0];
-      if (next !== undefined) {
-        const gx = (next % COARSE_SIZE) * COARSE + COARSE / 2;
-        const gy = Math.floor(next / COARSE_SIZE) * COARSE + COARSE / 2;
-        desired = Math.atan2(gy - r.y, gx - r.x);
+      // desired direction: next waypoint + boid separation from peers
+      let dirX = Math.cos(r.heading);
+      let dirY = Math.sin(r.heading);
+      const wp = r.path[0];
+      if (wp !== undefined) {
+        const wx = (wp % MAP_SIZE) + 0.5;
+        const wy = Math.floor(wp / MAP_SIZE) + 0.5;
+        const len = Math.hypot(wx - r.x, wy - r.y) || 1;
+        dirX = (wx - r.x) / len;
+        dirY = (wy - r.y) / len;
       }
-
-      // boid separation from nearby peers
+      let neighbors = 0;
       let sepX = 0;
       let sepY = 0;
-      let neighbors = 0;
       for (let j = 0; j < this.robots.length; j++) {
         if (j === id) continue;
         const o = this.robots[j] as Robot;
         const ddx = r.x - o.x;
         const ddy = r.y - o.y;
         const d2 = ddx * ddx + ddy * ddy;
-        if (d2 > 9 || d2 === 0) continue;
-        const d = Math.sqrt(d2) || 0.001;
+        if (d2 > 6.25 || d2 === 0) continue;
+        const d = Math.sqrt(d2) || 0.01;
         sepX += ddx / (d * d);
         sepY += ddy / (d * d);
         neighbors++;
       }
+      if (neighbors) {
+        const sl = Math.hypot(sepX, sepY) || 1;
+        dirX += (sepX / sl) * 0.7;
+        dirY += (sepY / sl) * 0.7;
+      }
+      const desired = Math.atan2(dirY, dirX);
 
-      // candidate steering directions weighted by clearance + separation
+      // wall-hugging steering: keep the best clear direction near the desired one
       let bestScore = -Infinity;
       let bestAngle = desired;
-      for (let k = -6; k <= 6; k++) {
-        const a = desired + (k * Math.PI) / 9;
+      for (let k = -8; k <= 8; k++) {
+        const a = desired + (k * Math.PI) / 12;
         const dx = Math.cos(a);
         const dy = Math.sin(a);
         const clr = this.clearance(r.x, r.y, dx, dy);
         if (clr === 0) continue;
-        let score = clr * 1.6 + Math.cos(a - desired) * 3.2;
-        if (neighbors) score += (dx * sepX + dy * sepY) * 2.4;
-        score += this.rng.gauss() * 0.25; // stochastic tie-breaking
+        const score =
+          clr * 0.9 + Math.cos(a - desired) * 4 + this.rng.gauss() * 0.2 - Math.abs(k) * 0.05;
         if (score > bestScore) {
           bestScore = score;
           bestAngle = a;
         }
       }
       if (bestScore === -Infinity) {
-        // fully boxed in: wall-follow by rotating in place
-        r.heading += 0.9 * dt * 6;
+        r.heading += 5 * dt;
         r.stuckFor += dt;
         this.congestionTime += dt;
         r.waiting = true;
         continue;
       }
 
-      // turn toward chosen direction
-      let delta = ((bestAngle - r.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-      const maxTurn = 3.2 * dt;
+      const delta = ((bestAngle - r.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      const maxTurn = 4.5 * dt;
       r.heading += Math.max(-maxTurn, Math.min(maxTurn, delta));
 
       let speed = MAX_SPEED * r.speedNoise * (1 + this.rng.gauss() * 0.01);
-      // slow down while turning hard, and crowd throttling
-      if (Math.abs(delta) > 1) speed *= 0.45;
-      if (neighbors > 2) speed *= 0.7;
-
-      if (this.config.mode === "central" && !this.doorwayPermit(r, r.heading)) {
-        speed = 0;
-      }
+      if (Math.abs(delta) > 1.2) speed *= 0.5;
+      if (neighbors > 3) speed *= 0.75;
+      if (this.config.mode === "central" && !this.doorwayPermit(r, r.heading)) speed = 0;
 
       const nx = r.x + Math.cos(r.heading) * speed * dt;
       const ny = r.y + Math.sin(r.heading) * speed * dt;
@@ -438,16 +469,18 @@ export class Simulation {
       this.totalDistance += moved;
       const ratio = moved / (MAX_SPEED * dt || 1);
       r.waiting = ratio < 0.4;
-      if (r.waiting) this.congestionTime += dt;
-      if (ratio > 0.6) r.stuckFor = Math.max(0, r.stuckFor - dt);
+      if (r.waiting) {
+        this.congestionTime += dt;
+        r.stuckFor += dt * 0.5;
+      } else if (ratio > 0.6) {
+        r.stuckFor = Math.max(0, r.stuckFor - dt);
+      }
     }
   }
 
-  /** run headless until all targets found or the time limit is reached */
+  /** run headless until every target is found or the time cap is reached */
   runHeadless(maxTime = 900, dt = 0.1): Metrics {
-    while (this.time < maxTime && !this.targets.every((t) => t.found)) {
-      this.step(dt);
-    }
+    while (this.time < maxTime && !this.metrics.done) this.step(dt);
     return this.metrics;
   }
 }
