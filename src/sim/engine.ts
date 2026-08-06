@@ -71,7 +71,7 @@ export interface Target {
   foundAt: number | null;
 }
 
-export const MAX_SPEED = 2.0; // tiles per second
+export const MAX_SPEED = 3.5; // tiles per second (1.75× original 2.0)
 const SENSOR_RANGE = 26;
 const FOV = (100 * Math.PI) / 180;
 const RADIO_RANGE = 40;
