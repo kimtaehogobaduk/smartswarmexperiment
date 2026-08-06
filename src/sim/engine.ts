@@ -519,15 +519,24 @@ export class Simulation {
         r.stuckFor = Math.max(0, r.stuckFor - dt);
       }
 
-      // 3-second rescue: escalating teleport-back — walks posHistory deeper on every attempt
+      // 3-second rescue: escalating teleport-back — walks posHistory deeper on every attempt.
+      // After 15 s total (rescueCount >= 5), give up and return to spawn.
       if (this.time - r.lastMoveTime > 3 && this.time > 3) {
-        const idx = Math.min(r.rescueCount, r.posHistory.length - 1);
-        const snap = r.posHistory[idx]!;
-        if (!blocked(this.map, Math.floor(snap.x), Math.floor(snap.y))) {
-          r.x = snap.x;
-          r.y = snap.y;
+        if (r.rescueCount >= 5) {
+          // 15 s stuck with no recovery → back to spawn
+          r.x = this.map.spawn.x + 0.5;
+          r.y = this.map.spawn.y + 0.5;
+          r.rescueCount = 0;
+          r.posHistory = [{ x: r.x, y: r.y }];
+        } else {
+          const idx = Math.min(r.rescueCount, r.posHistory.length - 1);
+          const snap = r.posHistory[idx]!;
+          if (!blocked(this.map, Math.floor(snap.x), Math.floor(snap.y))) {
+            r.x = snap.x;
+            r.y = snap.y;
+          }
+          r.rescueCount++;
         }
-        r.rescueCount++;          // next rescue goes one step deeper in history
         r.path = [];
         r.goalCell = -1;
         r.stuckFor = 0;
