@@ -47,6 +47,11 @@ export interface Robot {
   waiting: boolean;
   stuckFor: number;
   avoid: Map<number, number>;
+  /** position the bot was at the last time it made meaningful progress */
+  prevX: number;
+  prevY: number;
+  /** sim-time of the last meaningful move (used for the 3-s teleport rescue) */
+  lastMoveTime: number;
 }
 
 export interface Target {
@@ -135,6 +140,9 @@ export class Simulation {
         waiting: false,
         stuckFor: 0,
         avoid: new Map(),
+        prevX: x,
+        prevY: y,
+        lastMoveTime: 0,
       });
     }
   }
@@ -479,6 +487,12 @@ export class Simulation {
       let moved = 0;
       if (!blocked(this.map, Math.floor(nx), Math.floor(ny))) {
         moved = Math.hypot(nx - r.x, ny - r.y);
+        // Record previous position only while actually moving
+        if (moved > 0.05) {
+          r.prevX = r.x;
+          r.prevY = r.y;
+          r.lastMoveTime = this.time;
+        }
         r.x = nx;
         r.y = ny;
       } else {
@@ -493,6 +507,20 @@ export class Simulation {
         r.stuckFor += dt * 0.5;
       } else if (ratio > 0.6) {
         r.stuckFor = Math.max(0, r.stuckFor - dt);
+      }
+
+      // 3-second rescue: if coordinates haven't changed, snap back to last good tile
+      if (this.time - r.lastMoveTime > 3 && this.time > 3) {
+        // Only rescue if prevX/prevY is actually free (safety check)
+        if (!blocked(this.map, Math.floor(r.prevX), Math.floor(r.prevY))) {
+          r.x = r.prevX;
+          r.y = r.prevY;
+        }
+        r.path = [];
+        r.goalCell = -1;
+        r.stuckFor = 0;
+        r.lastMoveTime = this.time;
+        r.replanIn = 0; // force an immediate replan next tick
       }
     }
   }

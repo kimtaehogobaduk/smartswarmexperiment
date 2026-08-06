@@ -21,30 +21,39 @@ function buildMapLayer(sim: Simulation) {
   const img = ctx.createImageData(MAP_SIZE, MAP_SIZE);
   for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) {
     const t = sim.map.tiles[i];
+    const x = i % MAP_SIZE;
+    const y = (i - x) / MAP_SIZE;
     const o = i * 4;
-    if (t === TILE_WALL) {
-      img.data[o] = 26;
-      img.data[o + 1] = 44;
-      img.data[o + 2] = 42;
+    // Outer 2-tile border — bright amber/gold ring
+    const isOuterBorder = x < 2 || x >= MAP_SIZE - 2 || y < 2 || y >= MAP_SIZE - 2;
+    if (isOuterBorder) {
+      img.data[o]     = 200;
+      img.data[o + 1] = 145;
+      img.data[o + 2] = 20;
+    } else if (t === TILE_WALL) {
+      img.data[o]     = 65;
+      img.data[o + 1] = 110;
+      img.data[o + 2] = 100;
     } else if (t === TILE_FURNITURE) {
-      img.data[o] = 42;
-      img.data[o + 1] = 66;
-      img.data[o + 2] = 60;
+      img.data[o]     = 90;
+      img.data[o + 1] = 140;
+      img.data[o + 2] = 120;
     } else {
-      img.data[o] = 12;
-      img.data[o + 1] = 24;
-      img.data[o + 2] = 22;
+      // floor — noticeably brighter than before
+      img.data[o]     = 38;
+      img.data[o + 1] = 78;
+      img.data[o + 2] = 68;
     }
     img.data[o + 3] = 255;
   }
-  // doorway markers
+  // doorway markers — bright teal so openings are obvious
   for (const d of sim.map.doorways) {
-    for (let y = d.y; y < d.y + d.h; y++) {
-      for (let x = d.x; x < d.x + d.w; x++) {
-        const o = (y * MAP_SIZE + x) * 4;
-        img.data[o] = 30;
-        img.data[o + 1] = 90;
-        img.data[o + 2] = 70;
+    for (let dy = d.y; dy < d.y + d.h; dy++) {
+      for (let dx = d.x; dx < d.x + d.w; dx++) {
+        const o = (dy * MAP_SIZE + dx) * 4;
+        img.data[o]     = 40;
+        img.data[o + 1] = 200;
+        img.data[o + 2] = 150;
       }
     }
   }
@@ -138,7 +147,7 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = "#050b0a";
+      ctx.fillStyle = "#0d1f1b";
       ctx.fillRect(0, 0, w, h);
       if (!sim || !mapLayer.current) return;
 
@@ -172,10 +181,10 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
         const img = fctx.createImageData(COARSE_SIZE, COARSE_SIZE);
         for (let i = 0; i < COARSE_SIZE * COARSE_SIZE; i++) {
           const o = i * 4;
-          img.data[o] = 3;
-          img.data[o + 1] = 8;
-          img.data[o + 2] = 8;
-          img.data[o + 3] = sim.explored[i] ? 0 : 205;
+          img.data[o] = 8;
+          img.data[o + 1] = 20;
+          img.data[o + 2] = 18;
+          img.data[o + 3] = sim.explored[i] ? 0 : 175;
         }
         fctx.putImageData(img, 0, 0);
         ctx.drawImage(
