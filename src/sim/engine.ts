@@ -239,12 +239,14 @@ export class Simulation {
     const cx = cell % COARSE_SIZE;
     const cy = (cell - cx) / COARSE_SIZE;
     if (central) return this.passable[cell] === 1 && this.explored[cell] === UNKNOWN;
-    if (r.known[cell] !== FREE) return false;
+    // frontier = an unknown cell touching known-free space; unknown tiles are
+    // optimistically treated as walkable by the local planner
+    if (r.known[cell] !== UNKNOWN) return false;
     for (let d = 0; d < 4; d++) {
       const nx = cx + (d === 0 ? 1 : d === 1 ? -1 : 0);
       const ny = cy + (d === 2 ? 1 : d === 3 ? -1 : 0);
       if (nx < 0 || ny < 0 || nx >= COARSE_SIZE || ny >= COARSE_SIZE) continue;
-      if (r.known[cIdx(nx, ny)] === UNKNOWN) return true;
+      if (r.known[cIdx(nx, ny)] === FREE) return true;
     }
     return false;
   }
