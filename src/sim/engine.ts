@@ -450,14 +450,19 @@ export class Simulation {
       // wall-hugging steering: keep the best clear direction near the desired one
       let bestScore = -Infinity;
       let bestAngle = desired;
+      const knownGrid = this.config.mode === "central" ? this.explored : r.known;
       for (let k = -8; k <= 8; k++) {
         const a = desired + (k * Math.PI) / 12;
         const dx = Math.cos(a);
         const dy = Math.sin(a);
         const clr = this.clearance(r.x, r.y, dx, dy);
         if (clr === 0) continue;
+        // small bonus for directions pointing toward unexplored coarse cells
+        const lx = Math.min(COARSE_SIZE - 1, Math.max(0, Math.floor((r.x + dx * 4) / COARSE)));
+        const ly = Math.min(COARSE_SIZE - 1, Math.max(0, Math.floor((r.y + dy * 4) / COARSE)));
+        const unexploredBonus = knownGrid[cIdx(lx, ly)] === UNKNOWN ? 0.6 : 0;
         const score =
-          clr * 0.9 + Math.cos(a - desired) * 4 + this.rng.gauss() * 0.2 - Math.abs(k) * 0.05;
+          clr * 0.9 + Math.cos(a - desired) * 4 + this.rng.gauss() * 0.2 - Math.abs(k) * 0.05 + unexploredBonus;
         if (score > bestScore) {
           bestScore = score;
           bestAngle = a;
