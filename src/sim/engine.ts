@@ -349,7 +349,7 @@ export class Simulation {
         : Math.sign(Math.sin(angle)) * 2;
     if (lock.ttl <= 0 || lock.dir === dir) {
       lock.dir = dir;
-      lock.ttl = 0.9;
+      lock.ttl = 0.35; // shorter lock window reduces deadlocks
       return true;
     }
     return false;
@@ -384,10 +384,12 @@ export class Simulation {
       }
 
       r.replanIn -= dt;
-      if (r.replanIn <= 0 || !r.path.length || r.stuckFor > 1.2) {
-        if (r.stuckFor > 1.2 && r.goalCell >= 0) r.avoid.set(r.goalCell, this.time + 20);
+      if (r.replanIn <= 0 || !r.path.length || r.stuckFor > 0.7) {
+        if (r.stuckFor > 0.7 && r.goalCell >= 0) r.avoid.set(r.goalCell, this.time + 30);
         this.replan(r, id);
-        r.replanIn = 3 + this.rng.range(0, 2);
+        r.replanIn = r.stuckFor > 0.7
+          ? 1 + this.rng.range(0, 1)  // replan quickly after being stuck
+          : 3 + this.rng.range(0, 2);
         r.stuckFor = 0;
       }
 
@@ -440,8 +442,23 @@ export class Simulation {
           bestAngle = a;
         }
       }
+      // Fallback: full 360° sweep to escape corners and jams
       if (bestScore === -Infinity) {
-        r.heading += 5 * dt;
+        for (let k = 0; k < 24; k++) {
+          const a = r.heading + (k / 24) * Math.PI * 2;
+          const dx = Math.cos(a);
+          const dy = Math.sin(a);
+          const clr = this.clearance(r.x, r.y, dx, dy);
+          if (clr > 0) {
+            bestAngle = a;
+            bestScore = 0;
+            break;
+          }
+        }
+      }
+      if (bestScore === -Infinity) {
+        // Truly jammed — spin and accumulate stuck time
+        r.heading += (this.rng.next() > 0.5 ? 1 : -1) * 8 * dt;
         r.stuckFor += dt;
         this.congestionTime += dt;
         r.waiting = true;
@@ -480,9 +497,11 @@ export class Simulation {
     }
   }
 
-  /** run headless until every target is found or the time cap is reached */
+  /** run headless until every target is found or the time cap is reached.
+   *  Pass Infinity for maxTime to run with no cap (ends when all targets found). */
   runHeadless(maxTime = 900, dt = 0.1): Metrics {
-    while (this.time < maxTime && !this.metrics.done) this.step(dt);
+    const cap = isFinite(maxTime) ? maxTime : 86400; // safety: max 24h sim-time
+    while (this.time < cap && !this.metrics.done) this.step(dt);
     return this.metrics;
   }
 }

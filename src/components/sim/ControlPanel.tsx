@@ -4,7 +4,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import type { Metrics, SimConfig, SimMode } from "@/sim/engine";
 
-const SPEEDS = [1, 2, 5, 10];
+const SPEEDS = [1, 2, 5, 10, 25, 100, 150];
 
 interface Props {
   config: SimConfig;
@@ -88,13 +88,13 @@ export function ControlPanel({
             <SkipForward className="size-3.5" /> STEP
           </Button>
         </div>
-        <div className="grid grid-cols-4 gap-1">
+        <div className="flex flex-wrap gap-1">
           {SPEEDS.map((s) => (
             <Button
               key={s}
               size="sm"
               variant={speed === s ? "secondary" : "ghost"}
-              className="h-7 text-[11px]"
+              className="h-7 min-w-[2.75rem] text-[11px]"
               onClick={() => onSpeed(s)}
             >
               {s}x

@@ -35,6 +35,7 @@ interface Props {
 export function BatchPanel({ config, onArchive }: Props) {
   const [runs, setRuns] = useState(10);
   const [maxTime, setMaxTime] = useState(300);
+  const [noLimit, setNoLimit] = useState(false);
   const [compare, setCompare] = useState(true);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
@@ -46,7 +47,7 @@ export function BatchPanel({ config, onArchive }: Props) {
     setProgress({ done: 0, total });
     const collected: BatchStats[] = [];
     for (const mode of modes) {
-      const results = await runBatch({ ...config, mode }, runs, maxTime, () => {
+      const results = await runBatch({ ...config, mode }, runs, noLimit ? Infinity : maxTime, () => {
         completed++;
         setProgress({ done: completed, total });
       });
@@ -93,15 +94,22 @@ export function BatchPanel({ config, onArchive }: Props) {
         <div className="space-y-2">
           <div className="flex items-baseline justify-between">
             <Label className="label-hud">Time cap / run</Label>
-            <span className="text-sm text-hud">{maxTime}s</span>
+            <span className="text-sm text-hud">{noLimit ? "∞" : `${maxTime}s`}</span>
           </div>
           <Slider
             min={60}
             max={900}
             step={30}
             value={[maxTime]}
+            disabled={noLimit}
             onValueChange={(v) => setMaxTime(v[0] ?? 300)}
           />
+          <div className="flex items-center gap-2 pt-1">
+            <Switch id="nolimit" checked={noLimit} onCheckedChange={setNoLimit} />
+            <Label htmlFor="nolimit" className="text-[11px]">
+              No time limit — ends when all targets found
+            </Label>
+          </div>
         </div>
       </div>
 

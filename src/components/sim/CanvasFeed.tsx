@@ -208,7 +208,7 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
         ctx.stroke();
       }
 
-      // targets
+      // targets — always visible to the human viewer; bots only know via sensors
       for (let i = 0; i < sim.targets.length; i++) {
         const t = sim.targets[i]!;
         const sx = toScreenX(t.x);
@@ -217,10 +217,23 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
         const cellExplored = sim.explored[
           Math.floor(t.y / COARSE) * COARSE_SIZE + Math.floor(t.x / COARSE)
         ];
-        if (!t.found && !cellExplored) continue;
         const r = Math.max(4, z * 1.6);
-        ctx.strokeStyle = t.found ? "rgba(120,255,180,0.95)" : "rgba(255,190,80,0.85)";
-        ctx.lineWidth = 1.5;
+        // found=green, bot-detected-not-yet-found=amber, hidden-from-bots=dim magenta
+        let stroke: string;
+        let fill: string;
+        if (t.found) {
+          stroke = "rgba(120,255,180,0.95)";
+          fill   = "rgba(120,255,180,0.9)";
+        } else if (cellExplored) {
+          stroke = "rgba(255,190,80,0.85)";
+          fill   = "rgba(255,190,80,0.8)";
+        } else {
+          // viewer-only: bots have no idea this target exists yet
+          stroke = "rgba(220,80,180,0.55)";
+          fill   = "rgba(220,80,180,0.5)";
+        }
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = t.found || cellExplored ? 1.5 : 1;
         ctx.beginPath();
         ctx.arc(sx, sy, r, 0, Math.PI * 2);
         ctx.moveTo(sx - r - 3, sy);
@@ -228,9 +241,14 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
         ctx.moveTo(sx, sy - r - 3);
         ctx.lineTo(sx, sy + r + 3);
         ctx.stroke();
-        ctx.fillStyle = t.found ? "rgba(120,255,180,0.9)" : "rgba(255,190,80,0.8)";
+        ctx.fillStyle = fill;
         ctx.font = "9px 'JetBrains Mono', monospace";
-        ctx.fillText(`T${i + 1}${t.found ? ` ${t.foundAt?.toFixed(1)}s` : ""}`, sx + r + 5, sy - 4);
+        const label = t.found
+          ? `T${i + 1} ${t.foundAt?.toFixed(1)}s`
+          : cellExplored
+            ? `T${i + 1}`
+            : `T${i + 1} ?`;
+        ctx.fillText(label, sx + r + 5, sy - 4);
       }
 
       // robots: FOV cones + bodies
