@@ -4,7 +4,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import type { Metrics, SimConfig, SimMode } from "@/sim/engine";
 
-const SPEEDS = [1, 2, 5, 10, 25, 100, 150];
+const SPEEDS = [1, 2, 5, 10, 25, 50, 100, 150];
 
 interface Props {
   config: SimConfig;
