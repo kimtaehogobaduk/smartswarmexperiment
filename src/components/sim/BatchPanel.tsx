@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Play, Save } from "lucide-react";
+import { FileDown, Play, Save } from "lucide-react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ErrorBar,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -41,6 +42,24 @@ export function BatchPanel({ config, onArchive }: Props) {
   const [rotateMap, setRotateMap] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
+
+  const handlePDF = () => {
+    const style = document.createElement("style");
+    style.id = "__bpr";
+    style.textContent = `@media print {
+      body > * { display: none !important; }
+      #batch-results { display: block !important; position: static !important; color: #000 !important; background: #fff !important; padding: 16px; }
+      #batch-results * { color: #000 !important; fill: currentColor; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      #batch-results .panel-frame { border: 1px solid #ccc !important; background: #f9f9f9 !important; margin-bottom: 16px; page-break-inside: avoid; }
+      #batch-results .label-hud { font-weight: bold; margin-bottom: 8px; }
+      #batch-results .text-hud { color: #000 !important; }
+      #batch-results .text-muted-foreground { color: #555 !important; }
+      #batch-results svg text { fill: #000 !important; }
+    }`;
+    document.head.appendChild(style);
+    window.print();
+    window.addEventListener("afterprint", () => document.getElementById("__bpr")?.remove(), { once: true });
+  };
 
   const execute = async () => {
     if (rotateMap) {
@@ -162,14 +181,24 @@ export function BatchPanel({ config, onArchive }: Props) {
           {progress ? "RUNNING…" : "RUN HEADLESS BATCH"}
         </Button>
         {stats.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1"
-            onClick={() => onArchive(stats, runs)}
-          >
-            <Save className="size-3.5" /> ARCHIVE RESULTS
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1"
+              onClick={() => onArchive(stats, runs)}
+            >
+              <Save className="size-3.5" /> ARCHIVE RESULTS
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1"
+              onClick={handlePDF}
+            >
+              <FileDown className="size-3.5" /> EXPORT PDF
+            </Button>
+          </>
         )}
         <span className="label-hud">
           Canvas rendering is skipped during batch execution
@@ -186,7 +215,8 @@ export function BatchPanel({ config, onArchive }: Props) {
       )}
 
       {stats.length > 0 && (
-        <div className="space-y-5">
+        <div id="batch-results" className="space-y-5">
+          {/* ── comparison tables ── */}
           <div className="grid gap-3 sm:grid-cols-2">
             {stats.map((s) => (
               <div key={s.mode} className="panel-frame p-3">
@@ -198,20 +228,28 @@ export function BatchPanel({ config, onArchive }: Props) {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="text-[10px]">Target</TableHead>
-                      <TableHead className="text-[10px]">Avg time</TableHead>
+                      <TableHead className="text-[10px]">Avg</TableHead>
                       <TableHead className="text-[10px]">σ</TableHead>
+                      <TableHead className="text-[10px]">Min</TableHead>
+                      <TableHead className="text-[10px]">Max</TableHead>
                       <TableHead className="text-[10px]">Found</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {s.perTarget.map((t) => (
                       <TableRow key={t.index}>
-                        <TableCell className="py-1 text-[11px]">Target {t.index}</TableCell>
+                        <TableCell className="py-1 text-[11px]">T{t.index}</TableCell>
                         <TableCell className="py-1 text-[11px] text-hud">
                           {t.avg == null ? "—" : `${t.avg.toFixed(1)}s`}
                         </TableCell>
                         <TableCell className="py-1 text-[11px]">
                           ±{t.sd.toFixed(1)}s
+                        </TableCell>
+                        <TableCell className="py-1 text-[11px]">
+                          {t.min == null ? "—" : `${t.min.toFixed(1)}s`}
+                        </TableCell>
+                        <TableCell className="py-1 text-[11px]">
+                          {t.max == null ? "—" : `${t.max.toFixed(1)}s`}
                         </TableCell>
                         <TableCell className="py-1 text-[11px]">
                           {(t.foundRate * 100).toFixed(0)}%
@@ -221,21 +259,77 @@ export function BatchPanel({ config, onArchive }: Props) {
                   </TableBody>
                 </Table>
                 <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-                  <Stat label="Mission time" value={`${s.avgCompletion.toFixed(1)}s`} />
-                  <Stat label="Variance σ" value={`±${s.sdCompletion.toFixed(1)}s`} />
+                  <Stat label="Avg completion" value={`${s.avgCompletion.toFixed(1)}s`} />
+                  <Stat label="σ completion" value={`±${s.sdCompletion.toFixed(1)}s`} />
+                  <Stat label="Min / Max" value={`${s.minCompletion.toFixed(1)}s / ${s.maxCompletion.toFixed(1)}s`} />
                   <Stat label="Distance" value={`${s.avgDistance.toFixed(0)} tiles`} />
                   <Stat label="Congestion" value={`${s.avgCongestion.toFixed(0)} r·s`} />
-                  <Stat
-                    label="Full sweeps"
-                    value={`${(s.completionRate * 100).toFixed(0)}%`}
-                  />
+                  <Stat label="Full sweeps" value={`${(s.completionRate * 100).toFixed(0)}%`} />
                 </div>
               </div>
             ))}
           </div>
 
+          {/* ── per-mode individual charts with error bars ── */}
+          {stats.map((s) => {
+            const color = s.mode === "swarm" ? "var(--chart-1)" : "var(--chart-2)";
+            const chartData = s.perTarget.map((t) => ({
+              name: `T${t.index}`,
+              avg: t.avg ?? 0,
+              sd: t.sd,
+              min: t.min ?? 0,
+              max: t.max ?? 0,
+              foundPct: +(t.foundRate * 100).toFixed(1),
+            }));
+            return (
+              <div key={s.mode} className="panel-frame p-3 space-y-3">
+                <div className="label-hud">
+                  {s.mode === "swarm" ? "Swarm Intelligence" : "Centralized Tower"} — per-target avg ± σ
+                </div>
+                <div className="h-60">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                      <CartesianGrid stroke="var(--grid-line)" vertical={false} />
+                      <XAxis dataKey="name" stroke="var(--hud-dim)" fontSize={10} />
+                      <YAxis stroke="var(--hud-dim)" fontSize={10} unit="s" />
+                      <Tooltip
+                        contentStyle={{
+                          background: "var(--panel)",
+                          border: "1px solid var(--border)",
+                          fontSize: 11,
+                        }}
+                        formatter={(v: number, key: string) => {
+                          if (key === "avg") return [`${v.toFixed(2)}s`, "Avg"];
+                          return [v, key];
+                        }}
+                      />
+                      <Bar dataKey="avg" name="Avg (s)" fill={color} maxBarSize={40}>
+                        <ErrorBar
+                          dataKey="sd"
+                          width={5}
+                          strokeWidth={2}
+                          stroke="var(--hud-dim)"
+                          opacity={0.9}
+                        />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-[11px]">
+                  <Stat label="Avg mission" value={`${s.avgCompletion.toFixed(1)}s`} />
+                  <Stat label="σ mission" value={`±${s.sdCompletion.toFixed(1)}s`} />
+                  <Stat label="Min / Max" value={`${s.minCompletion.toFixed(1)}s / ${s.maxCompletion.toFixed(1)}s`} />
+                  <Stat label="Distance" value={`${s.avgDistance.toFixed(0)} tiles`} />
+                  <Stat label="Congestion" value={`${s.avgCongestion.toFixed(0)} r·s`} />
+                  <Stat label="Full sweeps" value={`${(s.completionRate * 100).toFixed(0)}%`} />
+                </div>
+              </div>
+            );
+          })}
+
+          {/* ── side-by-side comparison charts ── */}
           <div className="panel-frame p-3">
-            <div className="label-hud mb-2">Average time to first detection per target</div>
+            <div className="label-hud mb-2">Average detection time per target — both modes</div>
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={perTargetData}>

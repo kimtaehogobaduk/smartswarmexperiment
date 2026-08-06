@@ -3,9 +3,18 @@ import { Simulation, type Metrics, type SimConfig, type SimMode } from "./engine
 export interface BatchStats {
   mode: SimMode;
   runs: number;
-  perTarget: { index: number; avg: number | null; sd: number; foundRate: number }[];
+  perTarget: {
+    index: number;
+    avg: number | null;
+    sd: number;
+    min: number | null;
+    max: number | null;
+    foundRate: number;
+  }[];
   avgCompletion: number;
   sdCompletion: number;
+  minCompletion: number;
+  maxCompletion: number;
   avgDistance: number;
   avgCongestion: number;
   completionRate: number;
@@ -28,6 +37,8 @@ export function summarize(mode: SimMode, results: Metrics[], targets: number): B
       index: i + 1,
       avg: times.length ? mean(times) : null,
       sd: stdev(times),
+      min: times.length ? Math.min(...times) : null,
+      max: times.length ? Math.max(...times) : null,
       foundRate: results.length ? times.length / results.length : 0,
     };
   });
@@ -37,6 +48,8 @@ export function summarize(mode: SimMode, results: Metrics[], targets: number): B
     perTarget,
     avgCompletion: mean(completions),
     sdCompletion: stdev(completions),
+    minCompletion: completions.length ? Math.min(...completions) : 0,
+    maxCompletion: completions.length ? Math.max(...completions) : 0,
     avgDistance: mean(results.map((r) => r.totalDistance)),
     avgCongestion: mean(results.map((r) => r.congestionTime)),
     completionRate: results.length
