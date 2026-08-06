@@ -42,3 +42,4 @@ The `vite.config.ts` passes `server: { host: "0.0.0.0", port: 5000, allowedHosts
 ## User preferences
 
 - Keep the project structure and Lovable-compatible stack intact when making changes.
+- All future code changes must remain compatible with both Replit and Lovable (lovable.dev). Do not break Lovable compatibility when editing.
