@@ -50,8 +50,13 @@ export interface Robot {
   /** position the bot was at the last time it made meaningful progress */
   prevX: number;
   prevY: number;
+  /** older position snapshot, updated every ~3 tiles of travel — used for the escalated rescue */
+  prevX2: number;
+  prevY2: number;
   /** sim-time of the last meaningful move (used for the 3-s teleport rescue) */
   lastMoveTime: number;
+  /** how many consecutive rescues have fired without the bot recovering (0 = none yet) */
+  rescueCount: number;
 }
 
 export interface Target {
@@ -142,7 +147,10 @@ export class Simulation {
         avoid: new Map(),
         prevX: x,
         prevY: y,
+        prevX2: x,
+        prevY2: y,
         lastMoveTime: 0,
+        rescueCount: 0,
       });
     }
   }
@@ -487,11 +495,17 @@ export class Simulation {
       let moved = 0;
       if (!blocked(this.map, Math.floor(nx), Math.floor(ny))) {
         moved = Math.hypot(nx - r.x, ny - r.y);
-        // Record previous position only while actually moving
+        // Record previous positions only while actually moving
         if (moved > 0.05) {
+          // prevX2 advances only once the bot has moved ≥3 tiles from its last deep snapshot
+          if (Math.hypot(r.x - r.prevX2, r.y - r.prevY2) >= 3) {
+            r.prevX2 = r.prevX;
+            r.prevY2 = r.prevY;
+          }
           r.prevX = r.x;
           r.prevY = r.y;
           r.lastMoveTime = this.time;
+          r.rescueCount = 0; // moving freely — reset escalation counter
         }
         r.x = nx;
         r.y = ny;
@@ -509,13 +523,23 @@ export class Simulation {
         r.stuckFor = Math.max(0, r.stuckFor - dt);
       }
 
-      // 3-second rescue: if coordinates haven't changed, snap back to last good tile
+      // 3-second rescue: escalating teleport-back when a bot stays stuck
       if (this.time - r.lastMoveTime > 3 && this.time > 3) {
-        // Only rescue if prevX/prevY is actually free (safety check)
-        if (!blocked(this.map, Math.floor(r.prevX), Math.floor(r.prevY))) {
-          r.x = r.prevX;
-          r.y = r.prevY;
+        if (r.rescueCount === 0) {
+          // First rescue: snap to the last tile with meaningful movement
+          if (!blocked(this.map, Math.floor(r.prevX), Math.floor(r.prevY))) {
+            r.x = r.prevX;
+            r.y = r.prevY;
+          }
+        } else {
+          // Still stuck after first rescue: fall back to the deeper snapshot (≥3 tiles further)
+          if (!blocked(this.map, Math.floor(r.prevX2), Math.floor(r.prevY2))) {
+            r.x = r.prevX2;
+            r.y = r.prevY2;
+          }
+          r.rescueCount = 0; // reset so the cycle can repeat if needed
         }
+        r.rescueCount++;
         r.path = [];
         r.goalCell = -1;
         r.stuckFor = 0;
