@@ -132,7 +132,7 @@ export function generateMap(seed: number): SimMap {
     const area = r.w * r.h;
     let placed = 0;
     let guard = 0;
-    while (placed < area * 0.2 && guard < 4000) {
+    while (placed < area * 0.16 && guard < 4000) {
       guard++;
       const kind = kinds[rng.int(0, 3)] as FurnitureKind;
       const w =
