@@ -25,7 +25,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { runBatch, summarize, type BatchStats } from "@/sim/batch";
-import type { SimConfig } from "@/sim/engine";
+import { Simulation, type SimConfig } from "@/sim/engine";
+import { randomSeed } from "@/sim/rng";
 
 interface Props {
   config: SimConfig;
@@ -37,10 +38,40 @@ export function BatchPanel({ config, onArchive }: Props) {
   const [maxTime, setMaxTime] = useState(300);
   const [noLimit, setNoLimit] = useState(false);
   const [compare, setCompare] = useState(true);
+  const [rotateMap, setRotateMap] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
 
   const execute = async () => {
+    if (rotateMap) {
+      // "Change mode every map": swarm + centralized on the same map, then new random map
+      const timeLimit = noLimit ? Infinity : maxTime;
+      const total = runs * 2;
+      let completed = 0;
+      setProgress({ done: 0, total });
+      const swarmResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
+      const centralResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
+      let currentMapSeed = config.mapSeed;
+      for (let i = 0; i < runs; i++) {
+        const runSeed = (config.runSeed + i * 7919) >>> 0;
+        const swarmSim = new Simulation({ ...config, mode: "swarm", mapSeed: currentMapSeed, runSeed });
+        swarmResults.push(swarmSim.runHeadless(timeLimit));
+        setProgress({ done: ++completed, total });
+        await new Promise((res) => setTimeout(res, 0));
+        const centralSim = new Simulation({ ...config, mode: "central", mapSeed: currentMapSeed, runSeed });
+        centralResults.push(centralSim.runHeadless(timeLimit));
+        setProgress({ done: ++completed, total });
+        await new Promise((res) => setTimeout(res, 0));
+        currentMapSeed = randomSeed();
+      }
+      setStats([
+        summarize("swarm", swarmResults, config.targets),
+        summarize("central", centralResults, config.targets),
+      ]);
+      setProgress(null);
+      return;
+    }
+
     const modes = compare ? (["swarm", "central"] as const) : ([config.mode] as const);
     const total = runs * modes.length;
     let completed = 0;
@@ -81,7 +112,7 @@ export function BatchPanel({ config, onArchive }: Props) {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <div className="flex items-baseline justify-between">
-            <Label className="label-hud">Runs per mode</Label>
+            <Label className="label-hud">{rotateMap ? "Maps to try" : "Runs per mode"}</Label>
             <span className="text-sm text-hud">{runs}</span>
           </div>
           <Slider
@@ -115,9 +146,15 @@ export function BatchPanel({ config, onArchive }: Props) {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
-          <Switch id="cmp" checked={compare} onCheckedChange={setCompare} />
-          <Label htmlFor="cmp" className="text-[11px]">
+          <Switch id="cmp" checked={compare} onCheckedChange={setCompare} disabled={rotateMap} />
+          <Label htmlFor="cmp" className="text-[11px] opacity-100 disabled:opacity-50">
             Compare both modes
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch id="rotate" checked={rotateMap} onCheckedChange={setRotateMap} />
+          <Label htmlFor="rotate" className="text-[11px]">
+            Change mode every map
           </Label>
         </div>
         <Button size="sm" className="gap-1" disabled={!!progress} onClick={execute}>
