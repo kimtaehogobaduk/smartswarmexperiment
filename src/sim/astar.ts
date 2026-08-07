@@ -1,6 +1,3 @@
-import { MAP_SIZE } from "./map";
-
-const N = MAP_SIZE * MAP_SIZE;
 
 class MinHeap {
   private ids = new Int32Array(1 << 16);
@@ -62,16 +59,26 @@ class MinHeap {
 }
 
 /**
- * Reusable A* over the 500x500 tile grid. Scratch buffers are allocated once
+ * Reusable A* over the tile grid. Scratch buffers are allocated once
  * per simulation and reused with a generation stamp instead of being cleared.
  */
 export class PathFinder {
-  private g = new Float32Array(N);
-  private stamp = new Int32Array(N);
-  private from = new Int32Array(N);
-  private closed = new Uint8Array(N);
+  private readonly S: number;
+  private g: Float32Array;
+  private stamp: Int32Array;
+  private from: Int32Array;
+  private closed: Uint8Array;
   private gen = 0;
   private heap = new MinHeap();
+
+  constructor(size: number) {
+    this.S = size;
+    const n = size * size;
+    this.g = new Float32Array(n);
+    this.stamp = new Int32Array(n);
+    this.from = new Int32Array(n);
+    this.closed = new Uint8Array(n);
+  }
 
   /** @param isBlocked returns true when the tile cannot be entered */
   find(
@@ -82,8 +89,8 @@ export class PathFinder {
     isBlocked: (x: number, y: number) => boolean,
     maxNodes = 40000,
   ): number[] {
-    const start = sy * MAP_SIZE + sx;
-    const goal = gy * MAP_SIZE + gx;
+    const start = sy * this.S + sx;
+    const goal = gy * this.S + gx;
     if (start === goal) return [];
     const gen = ++this.gen;
     this.heap.clear();
@@ -101,8 +108,8 @@ export class PathFinder {
       if (this.closed[cur] === gen) continue;
       this.closed[cur] = gen;
       expanded++;
-      const cx = cur % MAP_SIZE;
-      const cy = (cur - cx) / MAP_SIZE;
+      const cx = cur % this.S;
+      const cy = (cur - cx) / this.S;
       const h = Math.hypot(gx - cx, gy - cy);
       if (h < bestH) {
         bestH = h;
@@ -114,13 +121,13 @@ export class PathFinder {
         const dy = d < 4 ? (d === 2 ? 1 : d === 3 ? -1 : 0) : d === 4 || d === 7 ? 1 : -1;
         const nx = cx + dx;
         const ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= MAP_SIZE || ny >= MAP_SIZE) continue;
+        if (nx < 0 || ny < 0 || nx >= this.S || ny >= this.S) continue;
         if (isBlocked(nx, ny)) continue;
         if (dx !== 0 && dy !== 0) {
           // no corner cutting through diagonal gaps
           if (isBlocked(cx + dx, cy) || isBlocked(cx, cy + dy)) continue;
         }
-        const ni = ny * MAP_SIZE + nx;
+        const ni = ny * this.S + nx;
         if (this.closed[ni] === gen) continue;
         const step = dx !== 0 && dy !== 0 ? 1.4142 : 1;
         const ng = (this.g[cur] as number) + step;
