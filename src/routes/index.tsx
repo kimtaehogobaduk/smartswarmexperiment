@@ -21,6 +21,7 @@ import {
   savePresets,
   type Preset,
   type RunRecord,
+  type TelemetrySnapshot,
 } from "@/sim/storage";
 import { randomSeed } from "@/sim/rng";
 
@@ -60,6 +61,7 @@ function Index() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [history, setHistory] = useState<RunRecord[]>([]);
+  const [snapshot, setSnapshot] = useState<TelemetrySnapshot | null>(null);
   const archived = useRef(false);
 
   useEffect(() => {
@@ -140,10 +142,13 @@ function Index() {
   };
 
   const savePreset = (name: string) => {
-    const next = [{ id: newId(), name, savedAt: Date.now(), config }, ...presets];
+    const next: Preset[] = [
+      { id: newId(), name, savedAt: Date.now(), config, metrics: metrics ?? undefined },
+      ...presets,
+    ];
     setPresets(next);
     savePresets(next);
-    toast.success(`Preset "${name}" saved`);
+    toast.success(`Preset "${name}" saved with telemetry`);
   };
 
   const archiveBatch = (stats: BatchStats[], runs: number) => {
