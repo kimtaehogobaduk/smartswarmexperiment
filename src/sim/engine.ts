@@ -18,6 +18,8 @@ export interface SimConfig {
   mode: SimMode;
   mapSeed: number;
   runSeed: number;
+  /** grid edge length in tiles (100–500) */
+  mapSize: number;
 }
 
 export interface Metrics {
@@ -83,6 +85,10 @@ const BLOCKED = 2;
 export class Simulation {
   readonly config: SimConfig;
   readonly map: SimMap;
+  /** grid edge length */
+  readonly S: number;
+  /** coarse grid edge length */
+  readonly CS: number;
   robots: Robot[] = [];
   targets: Target[] = [];
   /** team-visible explored coarse grid (fog rendering + central planner) */
@@ -93,16 +99,22 @@ export class Simulation {
   congestionTime = 0;
   totalDistance = 0;
   private rng: Rng;
-  private pf = new PathFinder();
+  private pf: PathFinder;
   private senseAcc = 0;
   private radioAcc = 0;
   private claims = new Map<number, number>();
   private doorLock: { dir: number; ttl: number }[] = [];
   private truthFine: Uint8Array;
+  /** cached count of found targets — avoids rebuilding metrics in hot loops */
+  private foundCount = 0;
 
   constructor(config: SimConfig) {
-    this.config = config;
-    this.map = generateMap(config.mapSeed);
+    const mapSize = clampMapSize(config.mapSize ?? MAP_SIZE);
+    this.config = { ...config, mapSize };
+    this.map = generateMap(config.mapSeed, mapSize);
+    this.S = this.map.size;
+    this.CS = this.map.coarseSize;
+    this.pf = new PathFinder(this.S);
     this.rng = new Rng(config.runSeed);
     this.explored = new Uint8Array(this.CS * this.CS);
     this.passable = new Uint8Array(this.CS * this.CS);
@@ -122,6 +134,10 @@ export class Simulation {
     this.doorLock = this.map.doorways.map(() => ({ dir: 0, ttl: 0 }));
     this.spawnRobots();
     this.spawnTargets();
+  }
+
+  private cIdx(cx: number, cy: number) {
+    return cy * this.CS + cx;
   }
 
   private spawnRobots() {
