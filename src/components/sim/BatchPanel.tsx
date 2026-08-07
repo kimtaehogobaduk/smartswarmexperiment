@@ -187,6 +187,17 @@ export function BatchPanel({ config, onArchive }: Props) {
             Change mode every map
           </Label>
         </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="randsize"
+            checked={randomSize}
+            onCheckedChange={setRandomSize}
+            disabled={!rotateMap}
+          />
+          <Label htmlFor="randsize" className="text-[11px]">
+            Randomize map size ({MAP_SIZE_MIN}–{MAP_SIZE_MAX})
+          </Label>
+        </div>
         <Button size="sm" className="gap-1" disabled={!!progress} onClick={execute}>
           <Play className="size-3.5" />
           {progress ? "RUNNING…" : "RUN HEADLESS BATCH"}
