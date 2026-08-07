@@ -261,26 +261,68 @@ export class Simulation {
       if (!t.found) {
         t.found = true;
         t.foundAt = this.time;
+        this.foundCount++;
       }
     }
   }
 
-  /** swarm peers exchange knowledge only inside physical radio range */
+  /**
+   * Swarm peers exchange knowledge only inside physical radio range.
+   * Robots in radio contact form clusters (union-find), and each cluster merges
+   * once — O(n · cells) instead of the O(n² · cells) pairwise merge.
+   */
   private radioSync() {
     if (this.config.mode !== "swarm") return;
     const n = this.robots.length;
+    const parent = new Int32Array(n);
+    for (let i = 0; i < n; i++) parent[i] = i;
+    const find = (a: number): number => {
+      let x = a;
+      while (parent[x] !== x) {
+        parent[x] = parent[parent[x] as number] as number;
+        x = parent[x] as number;
+      }
+      return x;
+    };
+    const r2 = RADIO_RANGE * RADIO_RANGE;
     for (let i = 0; i < n; i++) {
       const a = this.robots[i] as Robot;
       for (let j = i + 1; j < n; j++) {
         const b = this.robots[j] as Robot;
-        if (Math.hypot(a.x - b.x, a.y - b.y) > RADIO_RANGE) continue;
-        for (const t of a.knownTargets) b.knownTargets.add(t);
-        for (const t of b.knownTargets) a.knownTargets.add(t);
-        for (let k = 0; k < a.known.length; k++) {
-          const av = a.known[k] as number;
-          const bv = b.known[k] as number;
-          if (av === UNKNOWN && bv !== UNKNOWN) a.known[k] = bv;
-          else if (bv === UNKNOWN && av !== UNKNOWN) b.known[k] = av;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        if (dx * dx + dy * dy > r2) continue;
+        const ra = find(i);
+        const rb = find(j);
+        if (ra !== rb) parent[ra] = rb;
+      }
+    }
+    const groups = new Map<number, number[]>();
+    for (let i = 0; i < n; i++) {
+      const root = find(i);
+      const g = groups.get(root);
+      if (g) g.push(i);
+      else groups.set(root, [i]);
+    }
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      const cells = (this.robots[members[0] as number] as Robot).known.length;
+      const merged = new Uint8Array(cells);
+      const targets = new Set<number>();
+      for (const mi of members) {
+        const r = this.robots[mi] as Robot;
+        for (const t of r.knownTargets) targets.add(t);
+        const k = r.known;
+        for (let c = 0; c < cells; c++) {
+          if (merged[c] === UNKNOWN && k[c] !== UNKNOWN) merged[c] = k[c] as number;
+        }
+      }
+      for (const mi of members) {
+        const r = this.robots[mi] as Robot;
+        for (const t of targets) r.knownTargets.add(t);
+        const k = r.known;
+        for (let c = 0; c < cells; c++) {
+          if (k[c] === UNKNOWN && merged[c] !== UNKNOWN) k[c] = merged[c] as number;
         }
       }
     }
