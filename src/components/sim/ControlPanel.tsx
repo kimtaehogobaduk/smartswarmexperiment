@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import type { Metrics, SimConfig, SimMode } from "@/sim/engine";
+import type { TelemetrySnapshot } from "@/sim/storage";
 
 const SPEEDS = [1, 2, 5, 10, 25, 50, 100, 150];
 
@@ -12,6 +13,8 @@ interface Props {
   playing: boolean;
   speed: number;
   metrics: Metrics | null;
+  snapshot?: TelemetrySnapshot | null;
+  onClearSnapshot?: () => void;
   onPlayToggle: () => void;
   onStep: () => void;
   onSpeed: (s: number) => void;
@@ -24,6 +27,8 @@ export function ControlPanel({
   playing,
   speed,
   metrics,
+  snapshot,
+  onClearSnapshot,
   onPlayToggle,
   onStep,
   onSpeed,
@@ -140,6 +145,39 @@ export function ControlPanel({
         <Row label="Map" value={String(config.mapSeed)} />
         <Row label="Run" value={String(config.runSeed)} />
       </div>
+
+      {snapshot && (
+        <div className="panel-frame space-y-1.5 p-3">
+          <div className="flex items-center justify-between">
+            <div className="label-hud">
+              Loaded telemetry
+              {snapshot.source === "batch" ? ` · avg ×${snapshot.runs}` : ""}
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-5 px-1 text-[9px]"
+              onClick={onClearSnapshot}
+            >
+              CLEAR
+            </Button>
+          </div>
+          <div className="truncate text-[11px] text-hud">{snapshot.name}</div>
+          <Row label="Elapsed" value={`${snapshot.elapsed.toFixed(1)} s`} />
+          <Row
+            label="Targets found"
+            value={`${snapshot.found.toFixed(snapshot.source === "batch" ? 1 : 0)} / ${snapshot.targets}`}
+          />
+          <Row label="Distance" value={`${snapshot.distance.toFixed(0)} tiles`} />
+          <Row label="Congestion" value={`${snapshot.congestion.toFixed(1)} robot·s`} />
+          {snapshot.completionRate != null && (
+            <Row
+              label="Completion rate"
+              value={`${(snapshot.completionRate * 100).toFixed(0)} %`}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -21,6 +21,7 @@ import {
   savePresets,
   type Preset,
   type RunRecord,
+  type TelemetrySnapshot,
 } from "@/sim/storage";
 import { randomSeed } from "@/sim/rng";
 
@@ -60,6 +61,7 @@ function Index() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [history, setHistory] = useState<RunRecord[]>([]);
+  const [snapshot, setSnapshot] = useState<TelemetrySnapshot | null>(null);
   const archived = useRef(false);
 
   useEffect(() => {
@@ -140,10 +142,13 @@ function Index() {
   };
 
   const savePreset = (name: string) => {
-    const next = [{ id: newId(), name, savedAt: Date.now(), config }, ...presets];
+    const next: Preset[] = [
+      { id: newId(), name, savedAt: Date.now(), config, ...(metrics ? { metrics } : {}) },
+      ...presets,
+    ];
     setPresets(next);
     savePresets(next);
-    toast.success(`Preset "${name}" saved`);
+    toast.success(`Preset "${name}" saved with telemetry`);
   };
 
   const archiveBatch = (stats: BatchStats[], runs: number) => {
@@ -193,6 +198,8 @@ function Index() {
                 playing={playing}
                 speed={speed}
                 metrics={metrics}
+                snapshot={snapshot}
+                onClearSnapshot={() => setSnapshot(null)}
                 onPlayToggle={() => setPlaying((p) => !p)}
                 onStep={() => {
                   sim?.step(0.05);
@@ -241,7 +248,25 @@ function Index() {
                     onLoadPreset={(p) => {
                       setPlaying(false);
                       setConfig(p.config);
-                      toast.success(`Loaded preset "${p.name}"`);
+                      setSnapshot(
+                        p.metrics
+                          ? {
+                              name: p.name,
+                              source: "preset",
+                              runs: 1,
+                              targets: p.config.targets,
+                              elapsed: p.metrics.elapsed,
+                              found: p.metrics.found,
+                              distance: p.metrics.totalDistance,
+                              congestion: p.metrics.congestionTime,
+                            }
+                          : null,
+                      );
+                      toast.success(
+                        p.metrics
+                          ? `Loaded preset "${p.name}" with saved telemetry`
+                          : `Loaded preset "${p.name}"`,
+                      );
                     }}
                     onDeletePreset={(id) => {
                       const next = presets.filter((p) => p.id !== id);
@@ -275,6 +300,35 @@ function Index() {
                     onLoadRun={(r) => {
                       setPlaying(false);
                       setConfig(r.config);
+                      const s = r.stats;
+                      const m = r.metrics;
+                      setSnapshot(
+                        m
+                          ? {
+                              name: r.name,
+                              source: "live",
+                              runs: 1,
+                              targets: r.config.targets,
+                              elapsed: m.elapsed,
+                              found: m.found,
+                              distance: m.totalDistance,
+                              congestion: m.congestionTime,
+                            }
+                          : s
+                            ? {
+                                name: r.name,
+                                source: "batch",
+                                runs: r.runs,
+                                targets: r.config.targets,
+                                elapsed: s.avgCompletion,
+                                found:
+                                  s.perTarget.reduce((a, p) => a + p.foundRate, 0),
+                                distance: s.avgDistance,
+                                congestion: s.avgCongestion,
+                                completionRate: s.completionRate,
+                              }
+                            : null,
+                      );
                       toast.success(`Loaded configuration from "${r.name}"`);
                     }}
                     onDeleteRun={(id) => {

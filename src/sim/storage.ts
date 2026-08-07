@@ -10,6 +10,21 @@ export interface Preset {
   name: string;
   savedAt: number;
   config: SimConfig;
+  /** telemetry snapshot captured at the moment the preset was saved */
+  metrics?: Metrics;
+}
+
+/** Telemetry snapshot restored when a preset or archived run is loaded. */
+export interface TelemetrySnapshot {
+  name: string;
+  source: "preset" | "live" | "batch";
+  runs: number;
+  targets: number;
+  elapsed: number;
+  found: number;
+  distance: number;
+  congestion: number;
+  completionRate?: number;
 }
 
 export interface RunRecord {
