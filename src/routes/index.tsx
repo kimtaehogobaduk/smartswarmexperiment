@@ -143,7 +143,7 @@ function Index() {
 
   const savePreset = (name: string) => {
     const next: Preset[] = [
-      { id: newId(), name, savedAt: Date.now(), config, metrics: metrics ?? undefined },
+      { id: newId(), name, savedAt: Date.now(), config, ...(metrics ? { metrics } : {}) },
       ...presets,
     ];
     setPresets(next);
