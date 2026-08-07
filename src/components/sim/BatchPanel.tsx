@@ -80,17 +80,19 @@ export function BatchPanel({ config, onArchive }: Props) {
       const swarmResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
       const centralResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
       let currentMapSeed = config.mapSeed;
+      let currentMapSize = randomSize ? randomMapSize() : config.mapSize;
       for (let i = 0; i < runs; i++) {
         const runSeed = (config.runSeed + i * 7919) >>> 0;
-        const swarmSim = new Simulation({ ...config, mode: "swarm", mapSeed: currentMapSeed, runSeed });
+        const swarmSim = new Simulation({ ...config, mode: "swarm", mapSeed: currentMapSeed, mapSize: currentMapSize, runSeed });
         swarmResults.push(swarmSim.runHeadless(timeLimit));
         setProgress({ done: ++completed, total });
         await new Promise((res) => setTimeout(res, 0));
-        const centralSim = new Simulation({ ...config, mode: "central", mapSeed: currentMapSeed, runSeed });
+        const centralSim = new Simulation({ ...config, mode: "central", mapSeed: currentMapSeed, mapSize: currentMapSize, runSeed });
         centralResults.push(centralSim.runHeadless(timeLimit));
         setProgress({ done: ++completed, total });
         await new Promise((res) => setTimeout(res, 0));
         currentMapSeed = randomSeed();
+        if (randomSize) currentMapSize = randomMapSize();
       }
       setStats([
         summarize("swarm", swarmResults, config.targets),
