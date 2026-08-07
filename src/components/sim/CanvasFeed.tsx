@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Crosshair, Minus, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MAP_SIZE, COARSE, COARSE_SIZE, TILE_FURNITURE, TILE_WALL } from "@/sim/map";
+import { MAP_SIZE, COARSE, TILE_FURNITURE, TILE_WALL } from "@/sim/map";
 import { SENSOR, type Simulation } from "@/sim/engine";
 
 interface Props {
@@ -14,6 +14,7 @@ const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 14;
 
 function buildMapLayer(sim: Simulation) {
+  const MAP_SIZE = sim.map.size;
   const c = document.createElement("canvas");
   c.width = MAP_SIZE;
   c.height = MAP_SIZE;
@@ -61,11 +62,33 @@ function buildMapLayer(sim: Simulation) {
   return c;
 }
 
+/** pre-rendered FOV cone sprite (points along +x) reused for every robot */
+function buildConeSprite(range: number) {
+  const r = Math.max(2, Math.ceil(range));
+  const c = document.createElement("canvas");
+  c.width = r * 2;
+  c.height = r * 2;
+  const ctx = c.getContext("2d")!;
+  const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+  grad.addColorStop(0, "rgba(110,255,190,0.20)");
+  grad.addColorStop(1, "rgba(110,255,190,0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(r, r);
+  ctx.arc(r, r, r, -SENSOR.FOV / 2, SENSOR.FOV / 2);
+  ctx.closePath();
+  ctx.fill();
+  return c;
+}
+
 export function CanvasFeed({ sim, paused, speed }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mapLayer = useRef<HTMLCanvasElement | null>(null);
   const fogLayer = useRef<HTMLCanvasElement | null>(null);
+  const fogImage = useRef<ImageData | null>(null);
+  const fogTick = useRef(0);
+  const cone = useRef<{ canvas: HTMLCanvasElement; range: number } | null>(null);
   const cam = useRef({ x: MAP_SIZE / 2, y: MAP_SIZE / 2, zoom: 1.4 });
   const drag = useRef<{ x: number; y: number } | null>(null);
   const [clock, setClock] = useState("--:--:--");
@@ -80,17 +103,20 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
     if (!sim) return;
     mapLayer.current = buildMapLayer(sim);
     const fog = document.createElement("canvas");
-    fog.width = COARSE_SIZE;
-    fog.height = COARSE_SIZE;
+    fog.width = sim.CS;
+    fog.height = sim.CS;
     fogLayer.current = fog;
+    fogImage.current = null;
+    fogTick.current = 0;
   }, [sim]);
 
   const reset = useCallback(() => {
     const el = wrapRef.current;
-    const fit = el ? Math.min(el.clientWidth, el.clientHeight) / MAP_SIZE : 1.4;
-    cam.current = { x: MAP_SIZE / 2, y: MAP_SIZE / 2, zoom: Math.max(MIN_ZOOM, fit) };
+    const size = sim?.map.size ?? MAP_SIZE;
+    const fit = el ? Math.min(el.clientWidth, el.clientHeight) / size : 1.4;
+    cam.current = { x: size / 2, y: size / 2, zoom: Math.max(MIN_ZOOM, fit) };
     setZoomLabel(cam.current.zoom);
-  }, []);
+  }, [sim?.map.size]);
 
   useEffect(() => {
     reset();
@@ -151,6 +177,8 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
       ctx.fillRect(0, 0, w, h);
       if (!sim || !mapLayer.current) return;
 
+      const MAP_SIZE = sim.map.size;
+      const COARSE_SIZE = sim.CS;
       const c = cam.current;
       const z = c.zoom;
       // visible tile window (viewport culling)
@@ -178,15 +206,26 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
       const fog = fogLayer.current;
       if (fog) {
         const fctx = fog.getContext("2d")!;
-        const img = fctx.createImageData(COARSE_SIZE, COARSE_SIZE);
-        for (let i = 0; i < COARSE_SIZE * COARSE_SIZE; i++) {
-          const o = i * 4;
-          img.data[o] = 8;
-          img.data[o + 1] = 20;
-          img.data[o + 2] = 18;
-          img.data[o + 3] = sim.explored[i] ? 0 : 175;
+        // fog changes slowly — rebuild the bitmap a few times per second only
+        if (!fogImage.current) {
+          const img = fctx.createImageData(COARSE_SIZE, COARSE_SIZE);
+          for (let i = 0; i < COARSE_SIZE * COARSE_SIZE; i++) {
+            const o = i * 4;
+            img.data[o] = 8;
+            img.data[o + 1] = 20;
+            img.data[o + 2] = 18;
+            img.data[o + 3] = 175;
+          }
+          fogImage.current = img;
+          fogTick.current = 0;
         }
-        fctx.putImageData(img, 0, 0);
+        if (fogTick.current++ % 6 === 0) {
+          const data = fogImage.current.data;
+          for (let i = 0; i < COARSE_SIZE * COARSE_SIZE; i++) {
+            data[i * 4 + 3] = sim.explored[i] ? 0 : 175;
+          }
+          fctx.putImageData(fogImage.current, 0, 0);
+        }
         ctx.drawImage(
           fog,
           x0 / COARSE,
@@ -261,20 +300,21 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
       }
 
       // robots: FOV cones + bodies
+      const range = SENSOR.RANGE * z;
+      if (!cone.current || Math.abs(cone.current.range - range) > range * 0.08) {
+        cone.current = { canvas: buildConeSprite(range), range };
+      }
+      const coneCanvas = cone.current.canvas;
+      const coneR = cone.current.range;
       for (const r of sim.robots) {
         const sx = toScreenX(r.x);
         const sy = toScreenY(r.y);
         if (sx < -40 || sy < -40 || sx > w + 40 || sy > h + 40) continue;
-        const range = SENSOR.RANGE * z;
-        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(range, 1));
-        grad.addColorStop(0, "rgba(110,255,190,0.20)");
-        grad.addColorStop(1, "rgba(110,255,190,0)");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.arc(sx, sy, range, r.heading - SENSOR.FOV / 2, r.heading + SENSOR.FOV / 2);
-        ctx.closePath();
-        ctx.fill();
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(r.heading);
+        ctx.drawImage(coneCanvas, -coneR, -coneR);
+        ctx.restore();
 
         const size = Math.max(2.5, z * 0.9);
         const bodyColor = r.waiting ? "rgba(255,170,60,0.95)" : "rgba(150,255,205,0.95)";
@@ -342,7 +382,8 @@ export function CanvasFeed({ sim, paused, speed }: Props) {
             MODE {sim?.config.mode === "central" ? "CENTRALIZED TOWER" : "SWARM INTELLIGENCE"}
           </div>
           <div>
-            GRID 500×500 · UNITS {sim?.robots.length ?? 0} · ZOOM {zoomLabel.toFixed(2)}x
+            GRID {sim?.map.size ?? MAP_SIZE}×{sim?.map.size ?? MAP_SIZE} · UNITS{" "}
+            {sim?.robots.length ?? 0} · ZOOM {zoomLabel.toFixed(2)}x
           </div>
         </div>
         <Crosshair className="absolute top-1/2 left-1/2 size-5 -translate-x-1/2 -translate-y-1/2 text-hud/25" />
