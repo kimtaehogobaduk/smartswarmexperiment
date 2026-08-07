@@ -35,13 +35,6 @@ interface Props {
   onArchive: (stats: BatchStats[], runs: number) => void;
 }
 
-export function BatchPanel({ config, onArchive }: Props) {
-  const [runs, setRuns] = useState(10);
-  const [maxTime, setMaxTime] = useState(300);
-  const [noLimit, setNoLimit] = useState(false);
-  const [compare, setCompare] = useState(true);
-  const [rotateMap, setRotateMap] = useState(false);
-  const [randomSize, setRandomSize] = useState(false);
 const randomMapSize = () =>
   clampMapSize(
     MAP_SIZE_MIN +
@@ -49,6 +42,13 @@ const randomMapSize = () =>
         MAP_SIZE_STEP,
   );
 
+export function BatchPanel({ config, onArchive }: Props) {
+  const [runs, setRuns] = useState(10);
+  const [maxTime, setMaxTime] = useState(300);
+  const [noLimit, setNoLimit] = useState(false);
+  const [compare, setCompare] = useState(true);
+  const [rotateMap, setRotateMap] = useState(false);
+  const [randomSize, setRandomSize] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
 
