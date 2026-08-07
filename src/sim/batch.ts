@@ -18,6 +18,10 @@ export interface BatchStats {
   avgDistance: number;
   avgCongestion: number;
   completionRate: number;
+  /** average number of targets found per run */
+  avgFound: number;
+  /** targets present in each run */
+  targets: number;
 }
 
 export const mean = (v: number[]) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0);
@@ -55,6 +59,8 @@ export function summarize(mode: SimMode, results: Metrics[], targets: number): B
     completionRate: results.length
       ? results.filter((r) => r.done).length / results.length
       : 0,
+    avgFound: mean(results.map((r) => r.found)),
+    targets,
   };
 }
 
