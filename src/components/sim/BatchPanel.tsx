@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { runBatch, summarize, type BatchStats } from "@/sim/batch";
 import { Simulation, type SimConfig } from "@/sim/engine";
+import { MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_SIZE_STEP, clampMapSize } from "@/sim/map";
 import { randomSeed } from "@/sim/rng";
 
 interface Props {
@@ -40,6 +41,14 @@ export function BatchPanel({ config, onArchive }: Props) {
   const [noLimit, setNoLimit] = useState(false);
   const [compare, setCompare] = useState(true);
   const [rotateMap, setRotateMap] = useState(false);
+  const [randomSize, setRandomSize] = useState(false);
+const randomMapSize = () =>
+  clampMapSize(
+    MAP_SIZE_MIN +
+      Math.floor(Math.random() * ((MAP_SIZE_MAX - MAP_SIZE_MIN) / MAP_SIZE_STEP + 1)) *
+        MAP_SIZE_STEP,
+  );
+
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
 
