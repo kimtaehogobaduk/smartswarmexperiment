@@ -1,8 +1,8 @@
 import {
   COARSE,
-  COARSE_SIZE,
   MAP_SIZE,
   blocked,
+  clampMapSize,
   generateMap,
   hasLineOfSight,
   type SimMap,
@@ -18,6 +18,8 @@ export interface SimConfig {
   mode: SimMode;
   mapSeed: number;
   runSeed: number;
+  /** grid edge length in tiles (100–500) */
+  mapSize: number;
 }
 
 export interface Metrics {
@@ -79,11 +81,14 @@ const UNKNOWN = 0;
 const FREE = 1;
 const BLOCKED = 2;
 
-const cIdx = (cx: number, cy: number) => cy * COARSE_SIZE + cx;
 
 export class Simulation {
   readonly config: SimConfig;
   readonly map: SimMap;
+  /** grid edge length */
+  readonly S: number;
+  /** coarse grid edge length */
+  readonly CS: number;
   robots: Robot[] = [];
   targets: Target[] = [];
   /** team-visible explored coarse grid (fog rendering + central planner) */
@@ -94,30 +99,36 @@ export class Simulation {
   congestionTime = 0;
   totalDistance = 0;
   private rng: Rng;
-  private pf = new PathFinder();
+  private pf: PathFinder;
   private senseAcc = 0;
   private radioAcc = 0;
   private claims = new Map<number, number>();
   private doorLock: { dir: number; ttl: number }[] = [];
   private truthFine: Uint8Array;
+  /** cached count of found targets — avoids rebuilding metrics in hot loops */
+  private foundCount = 0;
 
   constructor(config: SimConfig) {
-    this.config = config;
-    this.map = generateMap(config.mapSeed);
+    const mapSize = clampMapSize(config.mapSize ?? MAP_SIZE);
+    this.config = { ...config, mapSize };
+    this.map = generateMap(config.mapSeed, mapSize);
+    this.S = this.map.size;
+    this.CS = this.map.coarseSize;
+    this.pf = new PathFinder(this.S);
     this.rng = new Rng(config.runSeed);
-    this.explored = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
-    this.passable = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
-    this.truthFine = new Uint8Array(MAP_SIZE * MAP_SIZE);
-    for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) {
+    this.explored = new Uint8Array(this.CS * this.CS);
+    this.passable = new Uint8Array(this.CS * this.CS);
+    this.truthFine = new Uint8Array(this.S * this.S);
+    for (let i = 0; i < this.S * this.S; i++) {
       this.truthFine[i] = this.map.tiles[i] === 0 ? FREE : BLOCKED;
     }
-    for (let cy = 0; cy < COARSE_SIZE; cy++) {
-      for (let cx = 0; cx < COARSE_SIZE; cx++) {
+    for (let cy = 0; cy < this.CS; cy++) {
+      for (let cx = 0; cx < this.CS; cx++) {
         let free = 0;
         for (let j = 0; j < COARSE; j++)
           for (let i = 0; i < COARSE; i++)
             if (!blocked(this.map, cx * COARSE + i, cy * COARSE + j)) free++;
-        this.passable[cIdx(cx, cy)] = free >= 4 ? 1 : 0;
+        this.passable[this.cIdx(cx, cy)] = free >= 4 ? 1 : 0;
       }
     }
     this.doorLock = this.map.doorways.map(() => ({ dir: 0, ttl: 0 }));
@@ -125,10 +136,14 @@ export class Simulation {
     this.spawnTargets();
   }
 
+  private cIdx(cx: number, cy: number) {
+    return cy * this.CS + cx;
+  }
+
   private spawnRobots() {
     const { spawn } = this.map;
     const central = this.config.mode === "central";
-    const sharedCoarse = new Uint8Array(COARSE_SIZE * COARSE_SIZE);
+    const sharedCoarse = new Uint8Array(this.CS * this.CS);
     for (let i = 0; i < this.config.robots; i++) {
       // every robot spawns inside one 2x2 tile pad -> immediate bottleneck queue
       const x = spawn.x + this.rng.range(0, 2);
@@ -139,9 +154,9 @@ export class Simulation {
         heading: this.rng.range(0, Math.PI * 2),
         speedNoise: 1 + this.rng.gauss() * 0.03, // ±3% speed jitter
         sensorBias: Math.abs(this.rng.gauss()) * 0.04,
-        known: central ? sharedCoarse : new Uint8Array(COARSE_SIZE * COARSE_SIZE),
+        known: central ? sharedCoarse : new Uint8Array(this.CS * this.CS),
         // the central tower holds the full map; swarm robots build beliefs locally
-        fine: central ? this.truthFine : new Uint8Array(MAP_SIZE * MAP_SIZE),
+        fine: central ? this.truthFine : new Uint8Array(this.S * this.S),
         path: [],
         goalCell: -1,
         replanIn: this.rng.range(0, 0.5),
@@ -163,16 +178,37 @@ export class Simulation {
   private spawnTargets() {
     const reach = this.map.reachable;
     const spawn = this.map.spawn;
+    const minSpawnDist = Math.min(60, this.S * 0.25);
+    // targets must be well spread out: 30 tiles apart, relaxed only if the map
+    // is too small / cluttered to honour it
+    const separations = [30, 22, 15, 8, 0].map((d) => Math.min(d, this.S * 0.3));
     for (let i = 0; i < this.config.targets; i++) {
-      for (let tries = 0; tries < 800; tries++) {
-        const flat = reach[this.rng.int(0, reach.length - 1)] as number;
-        const x = flat % MAP_SIZE;
-        const y = (flat - x) / MAP_SIZE;
-        if (Math.hypot(x - spawn.x, y - spawn.y) < 60) continue;
-        this.targets.push({ x: x + 0.5, y: y + 0.5, found: false, foundAt: null });
-        break;
+      let placed = false;
+      for (const sep of separations) {
+        for (let tries = 0; tries < 600 && !placed; tries++) {
+          const flat = reach[this.rng.int(0, reach.length - 1)] as number;
+          const x = flat % this.S;
+          const y = (flat - x) / this.S;
+          if (Math.hypot(x - spawn.x, y - spawn.y) < minSpawnDist) continue;
+          let ok = true;
+          for (const t of this.targets) {
+            if (Math.hypot(t.x - (x + 0.5), t.y - (y + 0.5)) < sep) {
+              ok = false;
+              break;
+            }
+          }
+          if (!ok) continue;
+          this.targets.push({ x: x + 0.5, y: y + 0.5, found: false, foundAt: null });
+          placed = true;
+        }
+        if (placed) break;
       }
     }
+  }
+
+  /** cheap done check — no allocation, safe to call inside the headless loop */
+  get done(): boolean {
+    return this.targets.length > 0 && this.foundCount === this.targets.length;
   }
 
   get metrics(): Metrics {
@@ -181,8 +217,8 @@ export class Simulation {
       targetTimes: this.targets.map((t) => t.foundAt),
       totalDistance: this.totalDistance,
       congestionTime: this.congestionTime,
-      found: this.targets.filter((t) => t.found).length,
-      done: this.targets.length > 0 && this.targets.every((t) => t.found),
+      found: this.foundCount,
+      done: this.done,
     };
   }
 
@@ -199,9 +235,9 @@ export class Simulation {
       for (let d = 1; d <= SENSOR_RANGE; d++) {
         const x = Math.floor(r.x + dx * d);
         const y = Math.floor(r.y + dy * d);
-        if (x < 0 || y < 0 || x >= MAP_SIZE || y >= MAP_SIZE) break;
-        const flat = y * MAP_SIZE + x;
-        const c = cIdx(Math.floor(x / COARSE), Math.floor(y / COARSE));
+        if (x < 0 || y < 0 || x >= this.S || y >= this.S) break;
+        const flat = y * this.S + x;
+        const c = this.cIdx(Math.floor(x / COARSE), Math.floor(y / COARSE));
         if (blocked(this.map, x, y)) {
           if (swarm) r.fine[flat] = BLOCKED;
           if (r.known[c] === UNKNOWN) r.known[c] = BLOCKED;
@@ -225,26 +261,68 @@ export class Simulation {
       if (!t.found) {
         t.found = true;
         t.foundAt = this.time;
+        this.foundCount++;
       }
     }
   }
 
-  /** swarm peers exchange knowledge only inside physical radio range */
+  /**
+   * Swarm peers exchange knowledge only inside physical radio range.
+   * Robots in radio contact form clusters (union-find), and each cluster merges
+   * once — O(n · cells) instead of the O(n² · cells) pairwise merge.
+   */
   private radioSync() {
     if (this.config.mode !== "swarm") return;
     const n = this.robots.length;
+    const parent = new Int32Array(n);
+    for (let i = 0; i < n; i++) parent[i] = i;
+    const find = (a: number): number => {
+      let x = a;
+      while (parent[x] !== x) {
+        parent[x] = parent[parent[x] as number] as number;
+        x = parent[x] as number;
+      }
+      return x;
+    };
+    const r2 = RADIO_RANGE * RADIO_RANGE;
     for (let i = 0; i < n; i++) {
       const a = this.robots[i] as Robot;
       for (let j = i + 1; j < n; j++) {
         const b = this.robots[j] as Robot;
-        if (Math.hypot(a.x - b.x, a.y - b.y) > RADIO_RANGE) continue;
-        for (const t of a.knownTargets) b.knownTargets.add(t);
-        for (const t of b.knownTargets) a.knownTargets.add(t);
-        for (let k = 0; k < a.known.length; k++) {
-          const av = a.known[k] as number;
-          const bv = b.known[k] as number;
-          if (av === UNKNOWN && bv !== UNKNOWN) a.known[k] = bv;
-          else if (bv === UNKNOWN && av !== UNKNOWN) b.known[k] = av;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        if (dx * dx + dy * dy > r2) continue;
+        const ra = find(i);
+        const rb = find(j);
+        if (ra !== rb) parent[ra] = rb;
+      }
+    }
+    const groups = new Map<number, number[]>();
+    for (let i = 0; i < n; i++) {
+      const root = find(i);
+      const g = groups.get(root);
+      if (g) g.push(i);
+      else groups.set(root, [i]);
+    }
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      const cells = (this.robots[members[0] as number] as Robot).known.length;
+      const merged = new Uint8Array(cells);
+      const targets = new Set<number>();
+      for (const mi of members) {
+        const r = this.robots[mi] as Robot;
+        for (const t of r.knownTargets) targets.add(t);
+        const k = r.known;
+        for (let c = 0; c < cells; c++) {
+          if (merged[c] === UNKNOWN && k[c] !== UNKNOWN) merged[c] = k[c] as number;
+        }
+      }
+      for (const mi of members) {
+        const r = this.robots[mi] as Robot;
+        for (const t of targets) r.knownTargets.add(t);
+        const k = r.known;
+        for (let c = 0; c < cells; c++) {
+          if (k[c] === UNKNOWN && merged[c] !== UNKNOWN) k[c] = merged[c] as number;
         }
       }
     }
@@ -252,13 +330,13 @@ export class Simulation {
 
   // ------------------------------------------------------------- navigation
   private cellOf(r: Robot) {
-    return cIdx(Math.floor(r.x / COARSE), Math.floor(r.y / COARSE));
+    return this.cIdx(Math.floor(r.x / COARSE), Math.floor(r.y / COARSE));
   }
 
   private isFrontier(r: Robot, cell: number): boolean {
     const central = this.config.mode === "central";
-    const cx = cell % COARSE_SIZE;
-    const cy = (cell - cx) / COARSE_SIZE;
+    const cx = cell % this.CS;
+    const cy = (cell - cx) / this.CS;
     if (central) return this.passable[cell] === 1 && this.explored[cell] === UNKNOWN;
     // frontier = an unknown cell touching known-free space; unknown tiles are
     // optimistically treated as walkable by the local planner
@@ -266,27 +344,23 @@ export class Simulation {
     for (let d = 0; d < 4; d++) {
       const nx = cx + (d === 0 ? 1 : d === 1 ? -1 : 0);
       const ny = cy + (d === 2 ? 1 : d === 3 ? -1 : 0);
-      if (nx < 0 || ny < 0 || nx >= COARSE_SIZE || ny >= COARSE_SIZE) continue;
-      if (r.known[cIdx(nx, ny)] === FREE) return true;
+      if (nx < 0 || ny < 0 || nx >= this.CS || ny >= this.CS) continue;
+      if (r.known[this.cIdx(nx, ny)] === FREE) return true;
     }
     return false;
   }
 
   /** pick an unclaimed goal: a known target first, otherwise nearest frontier */
   private chooseGoal(r: Robot, id: number): { x: number; y: number; cell: number } | null {
-    for (const ti of r.knownTargets) {
-      const t = this.targets[ti] as Target;
-      if (!t) continue;
-    }
     const from = this.cellOf(r);
-    const fx = from % COARSE_SIZE;
-    const fy = (from - fx) / COARSE_SIZE;
+    const fx = from % this.CS;
+    const fy = (from - fx) / this.CS;
     let best = -1;
     let bestScore = Infinity;
-    for (let cell = 0; cell < COARSE_SIZE * COARSE_SIZE; cell++) {
+    for (let cell = 0; cell < this.CS * this.CS; cell++) {
       if (!this.isFrontier(r, cell)) continue;
-      const cx = cell % COARSE_SIZE;
-      const cy = (cell - cx) / COARSE_SIZE;
+      const cx = cell % this.CS;
+      const cy = (cell - cx) / this.CS;
       const claimed = this.claims.has(cell) && this.claims.get(cell) !== id;
       const avoided = (r.avoid.get(cell) ?? 0) > this.time;
       if (avoided) continue;
@@ -298,8 +372,8 @@ export class Simulation {
       }
     }
     if (best < 0) return null;
-    const cx = best % COARSE_SIZE;
-    const cy = (best - cx) / COARSE_SIZE;
+    const cx = best % this.CS;
+    const cy = (best - cx) / this.CS;
     // pick a walkable tile inside the goal cell
     let gx = cx * COARSE + 2;
     let gy = cy * COARSE + 2;
@@ -308,7 +382,7 @@ export class Simulation {
       for (let i = 0; i < COARSE && !found; i++) {
         const x = cx * COARSE + i;
         const y = cy * COARSE + j;
-        if (r.fine[y * MAP_SIZE + x] !== BLOCKED) {
+        if (r.fine[y * this.S + x] !== BLOCKED) {
           gx = x;
           gy = y;
           found = true;
@@ -332,8 +406,8 @@ export class Simulation {
         return;
       }
       const cell = pool[this.rng.int(0, pool.length - 1)] as number;
-      const cx = cell % COARSE_SIZE;
-      const cy = (cell - cx) / COARSE_SIZE;
+      const cx = cell % this.CS;
+      const cy = (cell - cx) / this.CS;
       goal = { x: cx * COARSE + 2, y: cy * COARSE + 2, cell };
     }
     r.goalCell = goal.cell;
@@ -344,7 +418,7 @@ export class Simulation {
       Math.floor(r.y),
       goal.x,
       goal.y,
-      (x, y) => fine[y * MAP_SIZE + x] === BLOCKED,
+      (x, y) => fine[y * this.S + x] === BLOCKED,
       this.config.mode === "central" ? 60000 : 35000,
     );
     if (!r.path.length) r.avoid.set(goal.cell, this.time + 25);
@@ -360,7 +434,7 @@ export class Simulation {
 
   /** centralized doorway queue manager: one direction of travel at a time */
   private doorwayPermit(r: Robot, angle: number): boolean {
-    const di = this.map.doorwayAt[Math.floor(r.y) * MAP_SIZE + Math.floor(r.x)] as number;
+    const di = this.map.doorwayAt[Math.floor(r.y) * this.S + Math.floor(r.x)] as number;
     if (!di) return true;
     const lock = this.doorLock[di - 1];
     if (!lock) return true;
@@ -398,8 +472,8 @@ export class Simulation {
       // consume reached waypoints
       while (r.path.length) {
         const wp = r.path[0] as number;
-        const wx = (wp % MAP_SIZE) + 0.5;
-        const wy = Math.floor(wp / MAP_SIZE) + 0.5;
+        const wx = (wp % this.S) + 0.5;
+        const wy = Math.floor(wp / this.S) + 0.5;
         if (Math.hypot(wx - r.x, wy - r.y) < 1.3) r.path.shift();
         else break;
       }
@@ -419,8 +493,8 @@ export class Simulation {
       let dirY = Math.sin(r.heading);
       const wp = r.path[0];
       if (wp !== undefined) {
-        const wx = (wp % MAP_SIZE) + 0.5;
-        const wy = Math.floor(wp / MAP_SIZE) + 0.5;
+        const wx = (wp % this.S) + 0.5;
+        const wy = Math.floor(wp / this.S) + 0.5;
         const len = Math.hypot(wx - r.x, wy - r.y) || 1;
         dirX = (wx - r.x) / len;
         dirY = (wy - r.y) / len;
@@ -458,9 +532,9 @@ export class Simulation {
         const clr = this.clearance(r.x, r.y, dx, dy);
         if (clr === 0) continue;
         // small bonus for directions pointing toward unexplored coarse cells
-        const lx = Math.min(COARSE_SIZE - 1, Math.max(0, Math.floor((r.x + dx * 4) / COARSE)));
-        const ly = Math.min(COARSE_SIZE - 1, Math.max(0, Math.floor((r.y + dy * 4) / COARSE)));
-        const unexploredBonus = knownGrid[cIdx(lx, ly)] === UNKNOWN ? 0.6 : 0;
+        const lx = Math.min(this.CS - 1, Math.max(0, Math.floor((r.x + dx * 4) / COARSE)));
+        const ly = Math.min(this.CS - 1, Math.max(0, Math.floor((r.y + dy * 4) / COARSE)));
+        const unexploredBonus = knownGrid[this.cIdx(lx, ly)] === UNKNOWN ? 0.6 : 0;
         const score =
           clr * 0.9 + Math.cos(a - desired) * 4 + this.rng.gauss() * 0.2 - Math.abs(k) * 0.05 + unexploredBonus;
         if (score > bestScore) {
@@ -570,7 +644,7 @@ export class Simulation {
    *  Pass Infinity for maxTime to run with no cap (ends when all targets found). */
   runHeadless(maxTime = 900, dt = 0.1): Metrics {
     const cap = isFinite(maxTime) ? maxTime : 86400; // safety: max 24h sim-time
-    while (this.time < cap && !this.metrics.done) this.step(dt);
+    while (this.time < cap && !this.done) this.step(dt);
     return this.metrics;
   }
 }

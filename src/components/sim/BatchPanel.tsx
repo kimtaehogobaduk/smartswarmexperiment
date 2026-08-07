@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { runBatch, summarize, type BatchStats } from "@/sim/batch";
 import { Simulation, type SimConfig } from "@/sim/engine";
+import { MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_SIZE_STEP, clampMapSize } from "@/sim/map";
 import { randomSeed } from "@/sim/rng";
 
 interface Props {
@@ -34,12 +35,20 @@ interface Props {
   onArchive: (stats: BatchStats[], runs: number) => void;
 }
 
+const randomMapSize = () =>
+  clampMapSize(
+    MAP_SIZE_MIN +
+      Math.floor(Math.random() * ((MAP_SIZE_MAX - MAP_SIZE_MIN) / MAP_SIZE_STEP + 1)) *
+        MAP_SIZE_STEP,
+  );
+
 export function BatchPanel({ config, onArchive }: Props) {
   const [runs, setRuns] = useState(10);
   const [maxTime, setMaxTime] = useState(300);
   const [noLimit, setNoLimit] = useState(false);
   const [compare, setCompare] = useState(true);
   const [rotateMap, setRotateMap] = useState(false);
+  const [randomSize, setRandomSize] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
 
@@ -71,17 +80,19 @@ export function BatchPanel({ config, onArchive }: Props) {
       const swarmResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
       const centralResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
       let currentMapSeed = config.mapSeed;
+      let currentMapSize = randomSize ? randomMapSize() : config.mapSize;
       for (let i = 0; i < runs; i++) {
         const runSeed = (config.runSeed + i * 7919) >>> 0;
-        const swarmSim = new Simulation({ ...config, mode: "swarm", mapSeed: currentMapSeed, runSeed });
+        const swarmSim = new Simulation({ ...config, mode: "swarm", mapSeed: currentMapSeed, mapSize: currentMapSize, runSeed });
         swarmResults.push(swarmSim.runHeadless(timeLimit));
         setProgress({ done: ++completed, total });
         await new Promise((res) => setTimeout(res, 0));
-        const centralSim = new Simulation({ ...config, mode: "central", mapSeed: currentMapSeed, runSeed });
+        const centralSim = new Simulation({ ...config, mode: "central", mapSeed: currentMapSeed, mapSize: currentMapSize, runSeed });
         centralResults.push(centralSim.runHeadless(timeLimit));
         setProgress({ done: ++completed, total });
         await new Promise((res) => setTimeout(res, 0));
         currentMapSeed = randomSeed();
+        if (randomSize) currentMapSize = randomMapSize();
       }
       setStats([
         summarize("swarm", swarmResults, config.targets),
@@ -176,6 +187,17 @@ export function BatchPanel({ config, onArchive }: Props) {
             Change mode every map
           </Label>
         </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="randsize"
+            checked={randomSize}
+            onCheckedChange={setRandomSize}
+            disabled={!rotateMap}
+          />
+          <Label htmlFor="randsize" className="text-[11px]">
+            Randomize map size ({MAP_SIZE_MIN}–{MAP_SIZE_MAX})
+          </Label>
+        </div>
         <Button size="sm" className="gap-1" disabled={!!progress} onClick={execute}>
           <Play className="size-3.5" />
           {progress ? "RUNNING…" : "RUN HEADLESS BATCH"}
@@ -260,6 +282,7 @@ export function BatchPanel({ config, onArchive }: Props) {
                 </Table>
                 <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                   <Stat label="Avg completion" value={`${s.avgCompletion.toFixed(1)}s`} />
+                  <Stat label="Avg targets found" value={`${s.avgFound.toFixed(1)}/${s.targets}`} />
                   <Stat label="σ completion" value={`±${s.sdCompletion.toFixed(1)}s`} />
                   <Stat label="Min / Max" value={`${s.minCompletion.toFixed(1)}s / ${s.maxCompletion.toFixed(1)}s`} />
                   <Stat label="Distance" value={`${s.avgDistance.toFixed(0)} tiles`} />
@@ -317,6 +340,7 @@ export function BatchPanel({ config, onArchive }: Props) {
                 </div>
                 <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-[11px]">
                   <Stat label="Avg mission" value={`${s.avgCompletion.toFixed(1)}s`} />
+                  <Stat label="Avg targets found" value={`${s.avgFound.toFixed(1)}/${s.targets}`} />
                   <Stat label="σ mission" value={`±${s.sdCompletion.toFixed(1)}s`} />
                   <Stat label="Min / Max" value={`${s.minCompletion.toFixed(1)}s / ${s.maxCompletion.toFixed(1)}s`} />
                   <Stat label="Distance" value={`${s.avgDistance.toFixed(0)} tiles`} />
