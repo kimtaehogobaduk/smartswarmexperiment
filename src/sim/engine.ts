@@ -178,16 +178,37 @@ export class Simulation {
   private spawnTargets() {
     const reach = this.map.reachable;
     const spawn = this.map.spawn;
+    const minSpawnDist = Math.min(60, this.S * 0.25);
+    // targets must be well spread out: 30 tiles apart, relaxed only if the map
+    // is too small / cluttered to honour it
+    const separations = [30, 22, 15, 8, 0].map((d) => Math.min(d, this.S * 0.3));
     for (let i = 0; i < this.config.targets; i++) {
-      for (let tries = 0; tries < 800; tries++) {
-        const flat = reach[this.rng.int(0, reach.length - 1)] as number;
-        const x = flat % this.S;
-        const y = (flat - x) / this.S;
-        if (Math.hypot(x - spawn.x, y - spawn.y) < 60) continue;
-        this.targets.push({ x: x + 0.5, y: y + 0.5, found: false, foundAt: null });
-        break;
+      let placed = false;
+      for (const sep of separations) {
+        for (let tries = 0; tries < 600 && !placed; tries++) {
+          const flat = reach[this.rng.int(0, reach.length - 1)] as number;
+          const x = flat % this.S;
+          const y = (flat - x) / this.S;
+          if (Math.hypot(x - spawn.x, y - spawn.y) < minSpawnDist) continue;
+          let ok = true;
+          for (const t of this.targets) {
+            if (Math.hypot(t.x - (x + 0.5), t.y - (y + 0.5)) < sep) {
+              ok = false;
+              break;
+            }
+          }
+          if (!ok) continue;
+          this.targets.push({ x: x + 0.5, y: y + 0.5, found: false, foundAt: null });
+          placed = true;
+        }
+        if (placed) break;
       }
     }
+  }
+
+  /** cheap done check — no allocation, safe to call inside the headless loop */
+  get done(): boolean {
+    return this.targets.length > 0 && this.foundCount === this.targets.length;
   }
 
   get metrics(): Metrics {
@@ -196,8 +217,8 @@ export class Simulation {
       targetTimes: this.targets.map((t) => t.foundAt),
       totalDistance: this.totalDistance,
       congestionTime: this.congestionTime,
-      found: this.targets.filter((t) => t.found).length,
-      done: this.targets.length > 0 && this.targets.every((t) => t.found),
+      found: this.foundCount,
+      done: this.done,
     };
   }
 
