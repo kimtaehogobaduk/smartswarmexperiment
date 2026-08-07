@@ -352,10 +352,6 @@ export class Simulation {
 
   /** pick an unclaimed goal: a known target first, otherwise nearest frontier */
   private chooseGoal(r: Robot, id: number): { x: number; y: number; cell: number } | null {
-    for (const ti of r.knownTargets) {
-      const t = this.targets[ti] as Target;
-      if (!t) continue;
-    }
     const from = this.cellOf(r);
     const fx = from % this.CS;
     const fy = (from - fx) / this.CS;
@@ -648,7 +644,7 @@ export class Simulation {
    *  Pass Infinity for maxTime to run with no cap (ends when all targets found). */
   runHeadless(maxTime = 900, dt = 0.1): Metrics {
     const cap = isFinite(maxTime) ? maxTime : 86400; // safety: max 24h sim-time
-    while (this.time < cap && !this.metrics.done) this.step(dt);
+    while (this.time < cap && !this.done) this.step(dt);
     return this.metrics;
   }
 }
