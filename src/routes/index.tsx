@@ -24,11 +24,12 @@ import {
   type TelemetrySnapshot,
 } from "@/sim/storage";
 import { randomSeed } from "@/sim/rng";
+import { MAP_SIZE_MAX } from "@/sim/map";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Swarm vs Tower — Multi-Robot Search Simulator" },
+      { title: "2026 상산고 영어 심화 탐구_smart swarm vs control tower" },
       {
         name: "description",
         content:
@@ -49,6 +50,7 @@ const DEFAULT_CONFIG: SimConfig = {
   robots: 20,
   targets: 6,
   mode: "swarm",
+  mapSize: MAP_SIZE_MAX,
   mapSeed: 20260806,
   runSeed: 1337,
 };
@@ -88,6 +90,7 @@ function Index() {
     let raf = 0;
     let last = performance.now();
     let acc = 0;
+    let lastMetrics = 0;
     const DT = 0.05;
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
@@ -99,8 +102,12 @@ function Index() {
         acc -= DT;
         steps++;
       }
-      setMetrics(sim.metrics);
-      if (sim.metrics.done) setPlaying(false);
+      // metrics allocate arrays — refresh at ~12 Hz instead of every frame
+      if (now - lastMetrics > 80 || sim.done) {
+        lastMetrics = now;
+        setMetrics(sim.metrics);
+      }
+      if (sim.done) setPlaying(false);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
@@ -180,7 +187,10 @@ function Index() {
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <div className="flex items-center gap-3">
           <Radio className="size-4 text-hud" />
-          <h1 className="text-sm font-semibold text-hud">SEARCH &amp; SWEEP · C2 CONSOLE</h1>
+          <h1 className="text-sm font-semibold text-hud">
+            2026 상산고 영어 심화 탐구_smart swarm vs control tower
+          </h1>
+          <span className="text-[10px] tracking-wide text-muted-foreground">made by smartlab</span>
           <span className="label-hud hidden sm:inline">{banner}</span>
         </div>
         <span className="label-hud">

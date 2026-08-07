@@ -282,6 +282,7 @@ export function BatchPanel({ config, onArchive }: Props) {
                 </Table>
                 <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                   <Stat label="Avg completion" value={`${s.avgCompletion.toFixed(1)}s`} />
+                  <Stat label="Avg targets found" value={`${s.avgFound.toFixed(1)}/${s.targets}`} />
                   <Stat label="σ completion" value={`±${s.sdCompletion.toFixed(1)}s`} />
                   <Stat label="Min / Max" value={`${s.minCompletion.toFixed(1)}s / ${s.maxCompletion.toFixed(1)}s`} />
                   <Stat label="Distance" value={`${s.avgDistance.toFixed(0)} tiles`} />
@@ -339,6 +340,7 @@ export function BatchPanel({ config, onArchive }: Props) {
                 </div>
                 <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-[11px]">
                   <Stat label="Avg mission" value={`${s.avgCompletion.toFixed(1)}s`} />
+                  <Stat label="Avg targets found" value={`${s.avgFound.toFixed(1)}/${s.targets}`} />
                   <Stat label="σ mission" value={`±${s.sdCompletion.toFixed(1)}s`} />
                   <Stat label="Min / Max" value={`${s.minCompletion.toFixed(1)}s / ${s.maxCompletion.toFixed(1)}s`} />
                   <Stat label="Distance" value={`${s.avgDistance.toFixed(0)} tiles`} />
