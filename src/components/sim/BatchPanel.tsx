@@ -28,6 +28,7 @@ import {
 import { runBatch, summarize, type BatchStats } from "@/sim/batch";
 import { Simulation, type SimConfig } from "@/sim/engine";
 import {
+  DENSITY_DEFAULT,
   DENSITY_MAX,
   DENSITY_MIN,
   MAP_SIZE_MAX,
