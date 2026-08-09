@@ -99,7 +99,9 @@ export function BatchPanel({ config, onArchive }: Props) {
       const centralResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
       let currentMapSeed = config.mapSeed;
       let currentMapSize = randomSize ? randomMapSize() : config.mapSize;
-      let currentDensity = randomDensity ? randomDensityValue() : config.obstacleDensity;
+      let currentDensity = randomDensity
+        ? randomDensityValue()
+        : (config.obstacleDensity ?? DENSITY_DEFAULT);
       let currentRobots = randomRobots ? randomRobotCount() : config.robots;
       for (let i = 0; i < runs; i++) {
         const runSeed = (config.runSeed + i * 7919) >>> 0;
