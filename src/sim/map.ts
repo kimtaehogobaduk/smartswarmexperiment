@@ -9,6 +9,34 @@ export const COARSE_SIZE = MAP_SIZE / COARSE; // 100 (for the default size)
 
 export const coarseSizeOf = (size: number) => Math.floor(size / COARSE);
 
+const roundObstacleCorners = (tiles: Uint8Array, S: number) => {
+  const original = tiles.slice();
+  const isObs = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= S || y >= S) return false;
+    const t = original[y * S + x];
+    return t === TILE_WALL || t === TILE_FURNITURE;
+  };
+  const isFloor = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= S || y >= S) return true;
+    return original[y * S + x] === TILE_FLOOR;
+  };
+  for (let y = 2; y < S - 2; y++) {
+    for (let x = 2; x < S - 2; x++) {
+      const i = y * S + x;
+      if (original[i] === TILE_FLOOR) continue;
+      // Chamfer each convex corner by one tile. Top-left, top-right, bottom-left, bottom-right.
+      if (
+        (isObs(x + 1, y) && isObs(x, y + 1) && isFloor(x, y - 1) && isFloor(x - 1, y)) ||
+        (isObs(x - 1, y) && isObs(x, y + 1) && isFloor(x, y - 1) && isFloor(x + 1, y)) ||
+        (isObs(x + 1, y) && isObs(x, y - 1) && isFloor(x, y + 1) && isFloor(x - 1, y)) ||
+        (isObs(x - 1, y) && isObs(x, y - 1) && isFloor(x, y + 1) && isFloor(x + 1, y))
+      ) {
+        tiles[i] = TILE_FLOOR;
+      }
+    }
+  }
+};
+
 export const clampMapSize = (n: number) => {
   const v = Math.round(n / MAP_SIZE_STEP) * MAP_SIZE_STEP;
   return Math.max(MAP_SIZE_MIN, Math.min(MAP_SIZE_MAX, v));
@@ -172,6 +200,9 @@ export function generateMap(seed: number, size = MAP_SIZE): SimMap {
       placed += w * h;
     }
   }
+
+  // slight chamfer on obstacle corners so round-bodied robots don't catch on sharp pixels
+  roundObstacleCorners(tiles, S);
 
   // reachability flood fill from spawn
   const seen = new Uint8Array(S * S);
