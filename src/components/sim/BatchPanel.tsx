@@ -27,7 +27,14 @@ import {
 } from "@/components/ui/table";
 import { runBatch, summarize, type BatchStats } from "@/sim/batch";
 import { Simulation, type SimConfig } from "@/sim/engine";
-import { MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_SIZE_STEP, clampMapSize } from "@/sim/map";
+import {
+  DENSITY_MAX,
+  DENSITY_MIN,
+  MAP_SIZE_MAX,
+  MAP_SIZE_MIN,
+  MAP_SIZE_STEP,
+  clampMapSize,
+} from "@/sim/map";
 import { randomSeed } from "@/sim/rng";
 
 interface Props {
@@ -42,6 +49,14 @@ const randomMapSize = () =>
         MAP_SIZE_STEP,
   );
 
+const randomDensityValue = () =>
+  Math.round((DENSITY_MIN + Math.random() * (DENSITY_MAX - DENSITY_MIN)) * 100) / 100;
+
+const ROBOTS_MIN = 5;
+const ROBOTS_MAX = 100;
+const randomRobotCount = () =>
+  ROBOTS_MIN + Math.floor(Math.random() * (ROBOTS_MAX - ROBOTS_MIN + 1));
+
 export function BatchPanel({ config, onArchive }: Props) {
   const [runs, setRuns] = useState(10);
   const [maxTime, setMaxTime] = useState(300);
@@ -49,6 +64,8 @@ export function BatchPanel({ config, onArchive }: Props) {
   const [compare, setCompare] = useState(true);
   const [rotateMap, setRotateMap] = useState(false);
   const [randomSize, setRandomSize] = useState(false);
+  const [randomDensity, setRandomDensity] = useState(false);
+  const [randomRobots, setRandomRobots] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
 
@@ -81,18 +98,29 @@ export function BatchPanel({ config, onArchive }: Props) {
       const centralResults: ReturnType<InstanceType<typeof Simulation>["runHeadless"]>[] = [];
       let currentMapSeed = config.mapSeed;
       let currentMapSize = randomSize ? randomMapSize() : config.mapSize;
+      let currentDensity = randomDensity ? randomDensityValue() : config.obstacleDensity;
+      let currentRobots = randomRobots ? randomRobotCount() : config.robots;
       for (let i = 0; i < runs; i++) {
         const runSeed = (config.runSeed + i * 7919) >>> 0;
-        const swarmSim = new Simulation({ ...config, mode: "swarm", mapSeed: currentMapSeed, mapSize: currentMapSize, runSeed });
+        const shared = {
+          mapSeed: currentMapSeed,
+          mapSize: currentMapSize,
+          obstacleDensity: currentDensity,
+          robots: currentRobots,
+          runSeed,
+        };
+        const swarmSim = new Simulation({ ...config, mode: "swarm", ...shared });
         swarmResults.push(swarmSim.runHeadless(timeLimit));
         setProgress({ done: ++completed, total });
         await new Promise((res) => setTimeout(res, 0));
-        const centralSim = new Simulation({ ...config, mode: "central", mapSeed: currentMapSeed, mapSize: currentMapSize, runSeed });
+        const centralSim = new Simulation({ ...config, mode: "central", ...shared });
         centralResults.push(centralSim.runHeadless(timeLimit));
         setProgress({ done: ++completed, total });
         await new Promise((res) => setTimeout(res, 0));
         currentMapSeed = randomSeed();
         if (randomSize) currentMapSize = randomMapSize();
+        if (randomDensity) currentDensity = randomDensityValue();
+        if (randomRobots) currentRobots = randomRobotCount();
       }
       setStats([
         summarize("swarm", swarmResults, config.targets),
@@ -196,6 +224,29 @@ export function BatchPanel({ config, onArchive }: Props) {
           />
           <Label htmlFor="randsize" className="text-[11px]">
             Randomize map size ({MAP_SIZE_MIN}–{MAP_SIZE_MAX})
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="randdens"
+            checked={randomDensity}
+            onCheckedChange={setRandomDensity}
+            disabled={!rotateMap}
+          />
+          <Label htmlFor="randdens" className="text-[11px]">
+            Randomize obstacle density ({Math.round(DENSITY_MIN * 100)}–
+            {Math.round(DENSITY_MAX * 100)}%)
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="randbots"
+            checked={randomRobots}
+            onCheckedChange={setRandomRobots}
+            disabled={!rotateMap}
+          />
+          <Label htmlFor="randbots" className="text-[11px]">
+            Randomize robot count ({ROBOTS_MIN}–{ROBOTS_MAX})
           </Label>
         </div>
         <Button size="sm" className="gap-1" disabled={!!progress} onClick={execute}>
