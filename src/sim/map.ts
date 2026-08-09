@@ -4,6 +4,12 @@ export const MAP_SIZE = 500; // default / maximum grid edge
 export const MAP_SIZE_MIN = 100;
 export const MAP_SIZE_MAX = 500;
 export const MAP_SIZE_STEP = 20;
+export const DENSITY_MIN = 0.05;
+export const DENSITY_MAX = 0.2;
+export const DENSITY_STEP = 0.01;
+export const DENSITY_DEFAULT = 0.16;
+export const clampDensity = (n: number) =>
+  Math.max(DENSITY_MIN, Math.min(DENSITY_MAX, Number.isFinite(n) ? n : DENSITY_DEFAULT));
 export const COARSE = 5; // coarse cell = 5x5 tiles
 export const COARSE_SIZE = MAP_SIZE / COARSE; // 100 (for the default size)
 
@@ -85,8 +91,13 @@ interface Rect {
   h: number;
 }
 
-export function generateMap(seed: number, size = MAP_SIZE): SimMap {
+export function generateMap(
+  seed: number,
+  size = MAP_SIZE,
+  density = DENSITY_DEFAULT,
+): SimMap {
   const S = clampMapSize(size);
+  const dens = clampDensity(density);
   const idx = (x: number, y: number) => y * S + x;
   const fillRect = (tiles: Uint8Array, x: number, y: number, w: number, h: number, v: number) => {
     for (let j = y; j < y + h; j++) {
@@ -169,12 +180,12 @@ export function generateMap(seed: number, size = MAP_SIZE): SimMap {
   };
   const kinds: FurnitureKind[] = ["bed", "closet", "desk", "crate"];
 
-  // furniture: ~16% of each room's floor area
+  // furniture: `dens` fraction of each room's floor area
   for (const r of rooms) {
     const area = r.w * r.h;
     let placed = 0;
     let guard = 0;
-    while (placed < area * 0.16 && guard < 4000) {
+    while (placed < area * dens && guard < 4000) {
       guard++;
       const kind = kinds[rng.int(0, 3)] as FurnitureKind;
       const w =
