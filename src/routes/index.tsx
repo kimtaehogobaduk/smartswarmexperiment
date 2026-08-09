@@ -24,7 +24,7 @@ import {
   type TelemetrySnapshot,
 } from "@/sim/storage";
 import { randomSeed } from "@/sim/rng";
-import { MAP_SIZE_MAX } from "@/sim/map";
+import { DENSITY_DEFAULT, MAP_SIZE_MAX } from "@/sim/map";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -51,6 +51,7 @@ const DEFAULT_CONFIG: SimConfig = {
   targets: 6,
   mode: "swarm",
   mapSize: MAP_SIZE_MAX,
+  obstacleDensity: DENSITY_DEFAULT,
   mapSeed: 20260806,
   runSeed: 1337,
 };
