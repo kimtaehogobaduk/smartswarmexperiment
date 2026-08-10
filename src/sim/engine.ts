@@ -1,10 +1,8 @@
 import {
   COARSE,
   MAP_SIZE,
-  DENSITY_DEFAULT,
   blocked,
   clampMapSize,
-  clampDensity,
   generateMap,
   hasLineOfSight,
   type SimMap,
@@ -22,8 +20,6 @@ export interface SimConfig {
   runSeed: number;
   /** grid edge length in tiles (100–500) */
   mapSize: number;
-  /** obstacle (furniture) area fraction per room, 0.05–0.20 */
-  obstacleDensity?: number;
 }
 
 export interface Metrics {
@@ -114,9 +110,8 @@ export class Simulation {
 
   constructor(config: SimConfig) {
     const mapSize = clampMapSize(config.mapSize ?? MAP_SIZE);
-    const obstacleDensity = clampDensity(config.obstacleDensity ?? DENSITY_DEFAULT);
-    this.config = { ...config, mapSize, obstacleDensity };
-    this.map = generateMap(config.mapSeed, mapSize, obstacleDensity);
+    this.config = { ...config, mapSize };
+    this.map = generateMap(config.mapSeed, mapSize);
     this.S = this.map.size;
     this.CS = this.map.coarseSize;
     this.pf = new PathFinder(this.S);
