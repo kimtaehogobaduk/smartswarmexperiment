@@ -3,7 +3,15 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import type { Metrics, SimConfig, SimMode } from "@/sim/engine";
-import { MAP_SIZE_MAX, MAP_SIZE_MIN, MAP_SIZE_STEP } from "@/sim/map";
+import {
+  DENSITY_DEFAULT,
+  DENSITY_MAX,
+  DENSITY_MIN,
+  DENSITY_STEP,
+  MAP_SIZE_MAX,
+  MAP_SIZE_MIN,
+  MAP_SIZE_STEP,
+} from "@/sim/map";
 import type { TelemetrySnapshot } from "@/sim/storage";
 
 const SPEEDS = [1, 2, 5, 10, 25, 50, 100, 150];
@@ -68,6 +76,22 @@ export function ControlPanel({
           step={MAP_SIZE_STEP}
           value={[config.mapSize]}
           onValueChange={(v) => onConfig({ mapSize: v[0] ?? MAP_SIZE_MAX })}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <Label className="label-hud">Obstacle density</Label>
+          <span className="text-sm text-hud">
+            {Math.round((config.obstacleDensity ?? DENSITY_DEFAULT) * 100)}%
+          </span>
+        </div>
+        <Slider
+          min={DENSITY_MIN}
+          max={DENSITY_MAX}
+          step={DENSITY_STEP}
+          value={[config.obstacleDensity ?? DENSITY_DEFAULT]}
+          onValueChange={(v) => onConfig({ obstacleDensity: v[0] ?? DENSITY_DEFAULT })}
         />
       </div>
 
