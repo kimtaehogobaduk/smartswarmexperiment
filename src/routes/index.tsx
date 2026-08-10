@@ -374,6 +374,14 @@ function Index() {
                 </div>
               </ScrollArea>
             </TabsContent>
+
+            <TabsContent value="report" className="min-h-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  <DesignReport />
+                </div>
+              </ScrollArea>
+            </TabsContent>
           </Tabs>
         </main>
       </div>
