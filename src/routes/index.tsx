@@ -9,6 +9,8 @@ import { CanvasFeed } from "@/components/sim/CanvasFeed";
 import { ControlPanel } from "@/components/sim/ControlPanel";
 import { BatchPanel } from "@/components/sim/BatchPanel";
 import { HistoryPanel } from "@/components/sim/HistoryPanel";
+import { RunReport } from "@/components/sim/RunReport";
+import { DesignReport } from "@/components/sim/DesignReport";
 import { Simulation, type Metrics, type SimConfig } from "@/sim/engine";
 import type { BatchStats } from "@/sim/batch";
 import {
@@ -235,10 +237,31 @@ function Index() {
               <TabsTrigger value="files" className="text-[11px]">
                 FILES &amp; HISTORY
               </TabsTrigger>
+              <TabsTrigger value="report" className="text-[11px]">
+                SYSTEM REPORT
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="feed" className="min-h-0 flex-1">
-              <CanvasFeed sim={sim} paused={!playing} speed={speed} />
+              <ScrollArea className="h-full">
+                <div className="flex min-h-full flex-col">
+                  <div className="h-[calc(100vh-8rem)] min-h-[380px] shrink-0">
+                    <CanvasFeed sim={sim} paused={!playing} speed={speed} />
+                  </div>
+                  {metrics?.done ? (
+                    <div className="space-y-3 p-4">
+                      <div className="label-hud">
+                        Mission complete — scroll statistics below
+                      </div>
+                      <RunReport config={config} metrics={metrics} />
+                    </div>
+                  ) : (
+                    <div className="label-hud p-3">
+                      Statistics table appears here once every target is found
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
             </TabsContent>
 
             <TabsContent value="batch" className="min-h-0 flex-1">
@@ -348,6 +371,14 @@ function Index() {
                       saveHistory(next);
                     }}
                   />
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            <TabsContent value="report" className="min-h-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  <DesignReport />
                 </div>
               </ScrollArea>
             </TabsContent>

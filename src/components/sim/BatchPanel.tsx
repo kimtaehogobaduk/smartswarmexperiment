@@ -58,6 +58,11 @@ const ROBOTS_MAX = 100;
 const randomRobotCount = () =>
   ROBOTS_MIN + Math.floor(Math.random() * (ROBOTS_MAX - ROBOTS_MIN + 1));
 
+const TARGETS_MIN = 2;
+const TARGETS_MAX = 20;
+const randomTargetCount = () =>
+  TARGETS_MIN + Math.floor(Math.random() * (TARGETS_MAX - TARGETS_MIN + 1));
+
 export function BatchPanel({ config, onArchive }: Props) {
   const [runs, setRuns] = useState(10);
   const [maxTime, setMaxTime] = useState(300);
@@ -67,6 +72,7 @@ export function BatchPanel({ config, onArchive }: Props) {
   const [randomSize, setRandomSize] = useState(false);
   const [randomDensity, setRandomDensity] = useState(false);
   const [randomRobots, setRandomRobots] = useState(false);
+  const [randomTargets, setRandomTargets] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [stats, setStats] = useState<BatchStats[]>([]);
 
@@ -103,6 +109,8 @@ export function BatchPanel({ config, onArchive }: Props) {
         ? randomDensityValue()
         : (config.obstacleDensity ?? DENSITY_DEFAULT);
       let currentRobots = randomRobots ? randomRobotCount() : config.robots;
+      let currentTargets = randomTargets ? randomTargetCount() : config.targets;
+      let maxTargets = currentTargets;
       for (let i = 0; i < runs; i++) {
         const runSeed = (config.runSeed + i * 7919) >>> 0;
         const shared = {
@@ -110,6 +118,7 @@ export function BatchPanel({ config, onArchive }: Props) {
           mapSize: currentMapSize,
           obstacleDensity: currentDensity,
           robots: currentRobots,
+          targets: currentTargets,
           runSeed,
         };
         const swarmSim = new Simulation({ ...config, mode: "swarm", ...shared });
@@ -124,10 +133,14 @@ export function BatchPanel({ config, onArchive }: Props) {
         if (randomSize) currentMapSize = randomMapSize();
         if (randomDensity) currentDensity = randomDensityValue();
         if (randomRobots) currentRobots = randomRobotCount();
+        if (randomTargets) {
+          currentTargets = randomTargetCount();
+          maxTargets = Math.max(maxTargets, currentTargets);
+        }
       }
       setStats([
-        summarize("swarm", swarmResults, config.targets),
-        summarize("central", centralResults, config.targets),
+        summarize("swarm", swarmResults, maxTargets),
+        summarize("central", centralResults, maxTargets),
       ]);
       setProgress(null);
       return;
@@ -250,6 +263,17 @@ export function BatchPanel({ config, onArchive }: Props) {
           />
           <Label htmlFor="randbots" className="text-[11px]">
             Randomize robot count ({ROBOTS_MIN}–{ROBOTS_MAX})
+          </Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="randtargets"
+            checked={randomTargets}
+            onCheckedChange={setRandomTargets}
+            disabled={!rotateMap}
+          />
+          <Label htmlFor="randtargets" className="text-[11px]">
+            Randomize target count ({TARGETS_MIN}–{TARGETS_MAX})
           </Label>
         </div>
         <Button size="sm" className="gap-1" disabled={!!progress} onClick={execute}>
