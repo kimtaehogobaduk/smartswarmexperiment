@@ -246,6 +246,27 @@ function Index() {
               <ScrollArea className="h-full">
                 <div className="flex min-h-full flex-col">
                   <div className="h-[calc(100vh-8rem)] min-h-[380px] shrink-0">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-border px-3 py-1.5 text-[11px]">
+                      <span className="label-hud">MISSION PROGRESS</span>
+                      <span className="text-hud">
+                        {metrics?.found ?? 0} / {config.targets} targets (
+                        {Math.round(((metrics?.found ?? 0) / Math.max(1, config.targets)) * 100)}%)
+                      </span>
+                      <span className="text-muted-foreground">
+                        Last detection:{" "}
+                        <span className="text-hud">
+                          {(() => {
+                            const ts = (metrics?.targetTimes ?? []).filter(
+                              (t): t is number => t != null,
+                            );
+                            return ts.length ? `${Math.max(...ts).toFixed(1)} s` : "—";
+                          })()}
+                        </span>
+                      </span>
+                      <span className="text-muted-foreground">
+                        Elapsed <span className="text-hud">{(metrics?.elapsed ?? 0).toFixed(1)} s</span>
+                      </span>
+                    </div>
                     <CanvasFeed sim={sim} paused={!playing} speed={speed} />
                   </div>
                   {metrics?.done ? (
